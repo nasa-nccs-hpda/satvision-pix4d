@@ -185,3 +185,4 @@ class BaseTileExtractor:
 
         tqdm.write("✅ All images processed successfully!")
         return
+    
