@@ -3,8 +3,8 @@ import time
 import logging
 import argparse
 from multiprocessing import cpu_count
-from satvision_pix4d.pipelines.tiles_generator_pipeline import \
-    BaseTileExtractor
+from satvision_pix4d.pipelines.abi_tiles_generator_pipeline import \
+    ABITileExtractor
 
 
 # -----------------------------------------------------------------------------
@@ -19,6 +19,24 @@ def main():
     parser = argparse.ArgumentParser(description=desc)
 
     parser.add_argument('-r',
+                        '--stratification',
+                        type=str,
+                        required=False,
+                        default='random',
+                        choices=['convection'],
+                        dest='stratification_strategy',
+                        help='Select the stratification strategy')
+
+    parser.add_argument('-o',
+                        '--output-dir',
+                        type=str,
+                        default='./abi_tiles',
+                        required=False,
+                        dest='output_dir',
+                        help='Path to output directory')
+
+    """
+    parser.add_argument('-r',
                         '--input-regex',
                         type=str,
                         required=True,
@@ -26,6 +44,7 @@ def main():
                         dest='input_regex',
                         help='Input regex to select files')
 
+    
     parser.add_argument('-ts',
                         '--tile-size',
                         type=int,
@@ -67,13 +86,8 @@ def main():
                         dest='n_workers',
                         help='Integer with number of simultaneous workers')
 
-    parser.add_argument('-o',
-                        '--output-dir',
-                        type=str,
-                        default=None,
-                        required=False,
-                        dest='output_dir',
-                        help='Path to output directory')
+
+    """
 
     args = parser.parse_args()
 
@@ -93,18 +107,18 @@ def main():
     timer = time.time()
 
     # Set pipeline
-    pipeline = BaseTileExtractor(
-        input_regex=args.input_regex,
-        output_folder=args.output_dir,
-        tile_size=args.tile_size,
-        stride=args.stride,
-        num_tiles_per_image=args.n_tiles,
-        output_extension=args.output_extension,
-        num_workers=args.n_workers
+    pipeline = ABITileExtractor(
+        stratification_strategy=args.stratification_strategy,
+        output_dir=args.output_dir,
+        #tile_size=args.tile_size,
+        #stride=args.stride,
+        #num_tiles_per_image=args.n_tiles,
+        #output_extension=args.output_extension,
+        #num_workers=args.n_workers
     )
 
     # Process images
-    pipeline.process_all_images()
+    pipeline.gen_tiles()
 
     logging.info(f'Took {(time.time()-timer)/60.0:.2f} min.')
 
