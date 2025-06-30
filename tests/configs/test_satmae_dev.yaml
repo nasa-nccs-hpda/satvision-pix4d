@@ -1,0 +1,55 @@
+PIPELINE: 'satvision_pix4d_satmae_pretrain'
+DATAMODULE: 'abi_temporal'
+
+OUTPUT: '/explore/nobackup/projects/pix4dcloud/jacaraba/model_development/satmae'
+
+MODEL:
+  TYPE: satmae
+  NAME: satmae_satvision_pix4d_pretrain-dev
+  DROP_PATH_RATE: 0.1
+  MAE_VIT:
+    PATCH_SIZE: 16
+    IN_CHANS: 14
+    EMBED_DIM: 768
+    DEPTHS: 12
+    NUM_HEADS: 12
+    MLP_RATIO: 4.0
+    DECODER_EMBED_DIM: 512
+    DECODER_DEPTH: 8
+    DECODER_NUM_HEADS: 16
+    SAME_MASK: False
+
+DATA:
+  DATAMODULE: True
+  BATCH_SIZE: 64 
+  LENGTH: 1_920_000
+  PIN_MEMORY: True
+  NUM_WORKERS: 4
+  DATA_PATHS: [/explore/nobackup/projects/ilab/projects/3DClouds/data/mosaic-v3/webdatasets/shards]
+  IMG_SIZE: 512
+  MASK_PATCH_SIZE: 8
+  MASK_RATIO: 0.6
+
+TRAIN:
+  ACCELERATOR: 'gpu'
+  STRATEGY: 'deepspeed'
+  USE_CHECKPOINT: True
+  EPOCHS: 50 
+  WARMUP_EPOCHS: 10
+  BASE_LR: 3e-4
+  MIN_LR: 2e-4
+  WARMUP_LR: 1e-4
+  WEIGHT_DECAY: 0.05
+  LR_SCHEDULER:
+    NAME: 'multistep'
+    GAMMA: 0.1
+    MULTISTEPS: [700,]
+
+DEEPSPEED:
+  STAGE: 2
+
+PRECISION: 'bf16'
+
+PRINT_FREQ: 10 
+SAVE_FREQ: 50
+TAG: satmae_satvision_pix4d_pretrain-dev
