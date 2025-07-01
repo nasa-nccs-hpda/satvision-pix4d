@@ -17,6 +17,9 @@ from satvision_pix4d.models.utils.pos_embed import \
     get_2d_sincos_pos_embed, get_1d_sincos_pos_embed_from_grid_torch
 
 
+
+
+
 class MaskedAutoencoderViT(nn.Module):
     """ Masked Autoencoder with VisionTransformer backbone
     """

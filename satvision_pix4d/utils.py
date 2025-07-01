@@ -1,6 +1,7 @@
+import os
+import logging
 import argparse
 from datetime import datetime
-from lightning.pytorch.strategies import DeepSpeedStrategy
 
 
 # -----------------------------------------------------------------------------
@@ -29,6 +30,37 @@ def get_strategy(config):
             },
         }
 
+        """
+        TODO: this setting is being set somewhere in the pipeline
+        and I was not able to rewrite it. We will check on this later,
+        I just do not have enough time right now. Leaving some code here
+        to document this attempt.
+        """
+
+        # Check if the user specified a cache dir
+        if config.TRAIN.TRITON_CACHE_DIR is not None:
+
+            triton_cache_dir = config.TRAIN.TRITON_CACHE_DIR
+
+        elif os.path.exists("/lscratch"):
+
+            # Get username
+            user = os.environ.get("USER", "default_user")
+
+            # Construct path
+            triton_cache_dir = f"/lscratch/{user}/triton_cache"
+
+        else:
+            logging.info("TRITON_CACHE_DIR using default location.")
+            from lightning.pytorch.strategies import DeepSpeedStrategy
+            return DeepSpeedStrategy(config=deepspeed_config)
+
+        # For any other path, just create and use it
+        os.makedirs(triton_cache_dir, exist_ok=True)
+        os.environ["TRITON_CACHE_DIR"] = triton_cache_dir
+        logging.info(f"Using TRITON_CACHE_DIR = {triton_cache_dir}")
+
+        from lightning.pytorch.strategies import DeepSpeedStrategy
         return DeepSpeedStrategy(config=deepspeed_config)
 
     else:

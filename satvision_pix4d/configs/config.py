@@ -35,8 +35,14 @@ _C.DATA.LENGTH = 1920000
 _C.DATA.INTERPOLATION = 'bicubic'
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.DATA.PIN_MEMORY = True
+# Drop last incomplete batch
+_C.DATA.DROP_LAST = False
 # Number of data loading threads
 _C.DATA.NUM_WORKERS = 8
+# Shuffle the training dataset
+_C.DATA.SHUFFLE = True
+# Allow persistent workers within the dataloaders
+_C.DATA.PERSISTENT_WORKERS = True
 # [SimMIM] Mask patch size for MaskGenerator
 _C.DATA.MASK_PATCH_SIZE = 32
 # [SimMIM] Mask ratio for MaskGenerator
@@ -119,7 +125,8 @@ _C.LOSS.GAMMA = 1.0
 _C.TRAIN = CN()
 _C.TRAIN.ACCELERATOR = 'gpu'
 _C.TRAIN.STRATEGY = 'deepspeed'
-_C.TRAIN.LIMIT_TRAIN_BATCHES = True
+_C.TRAIN.TRITON_CACHE_DIR = None
+_C.TRAIN.LIMIT_TRAIN_BATCHES = False
 _C.TRAIN.NUM_TRAIN_BATCHES = None
 _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 300
@@ -190,7 +197,7 @@ _C.TEST.CROP = True
 # Misc
 # -----------------------------------------------------------------------------
 # Whether to enable pytorch amp, overwritten by command line argument
-_C.PRECISION = '32'
+_C.PRECISION = "32"
 # Enable Pytorch automatic mixed precision (amp).
 _C.AMP_ENABLE = True
 # Path to output folder, overwritten by command line argument

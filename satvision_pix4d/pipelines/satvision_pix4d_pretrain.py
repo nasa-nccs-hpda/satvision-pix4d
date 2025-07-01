@@ -4,8 +4,8 @@ import torchmetrics
 import lightning.pytorch as pl
 from torch.utils.data import DataLoader
 
-#from satvision_toa.models.mim import build_mim_model
-#from satvision_toa.optimizers.build import build_optimizer
+from satvision_pix4d.models.encoders.mae import build_satmae_model
+from satvision_pix4d.optimizers.build import build_optimizer
 
 #from satvision_toa.transforms.mim_modis_toa import MimTransform
 #from satvision_toa.datasets.sharded_dataset import ShardedDataset
@@ -24,33 +24,25 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         self.save_hyperparameters(ignore=['model'])
         self.config = config
 
-        #self.model = build_mim_model(self.config)
-        #if self.config.MODEL.PRETRAINED:
-        #    self.load_checkpoint()
+        self.model = build_satmae_model(self.config)
+        if self.config.MODEL.PRETRAINED:
+            self.load_checkpoint()
 
         #self.transform = MimTransform(self.config)
-        #self.batch_size = config.DATA.BATCH_SIZE
-        #self.num_workers = config.DATA.NUM_WORKERS
-        #self.img_size = config.DATA.IMG_SIZE
-        #self.train_data_paths = config.DATA.DATA_PATHS
-        #self.train_data_length = config.DATA.LENGTH
-        #self.pin_memory = config.DATA.PIN_MEMORY
+        self.batch_size = config.DATA.BATCH_SIZE
+        self.num_workers = config.DATA.NUM_WORKERS
+        self.img_size = config.DATA.IMG_SIZE
+        self.train_data_paths = config.DATA.DATA_PATHS
+        self.train_data_length = config.DATA.LENGTH
+        self.pin_memory = config.DATA.PIN_MEMORY
 
-        #self.train_loss_avg = torchmetrics.MeanMetric()
-        #self.trainset = ShardedDataset(
-        #    self.config,
-        #    self.train_data_paths,
-        #    split='train',
-        #    length=self.train_data_length,
-        #    img_size=self.img_size,
-        #    transform=self.transform,
-        #    batch_size=self.batch_size).dataset()
+        self.train_loss_avg = torchmetrics.MeanMetric()
 
     # -------------------------------------------------------------------------
     # load_checkpoint
     # -------------------------------------------------------------------------
     def load_checkpoint(self):
-        logging.info('Loading checkpoint from {self.config.MODEL.PRETRAINED}')
+        logging.info(f'Loading checkpoint from {self.config.MODEL.PRETRAINED}')
         checkpoint = torch.load(self.config.MODEL.PRETRAINED)
         self.model.load_state_dict(checkpoint['module'])
         logging.info('Successfully applied checkpoint')
@@ -58,23 +50,35 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
     # -------------------------------------------------------------------------
     # forward
     # -------------------------------------------------------------------------
-    def forward(self, x, x_mask):
-        return self.model(x, x_mask)
+    def forward(self, samples, timestamps):
+        return self.model(
+            samples, timestamps, mask_ratio=self.config.DATA.MASK_RATIO)
 
     # -------------------------------------------------------------------------
     # training_step
     # -------------------------------------------------------------------------
     def training_step(self, batch, batch_idx):
-        image_imagemask = batch[0]
-        image = torch.stack([pair[0] for pair in image_imagemask])
-        mask = torch.stack([pair[1] for pair in image_imagemask])
-        loss = self.forward(image, mask)
+
+        # Unpack your batch exactly as original training loop
+        samples, timestamps = batch
+
+        # Move tensors to device (Lightning usually does this, but explicitly ok)
+        samples = samples.to(self.device, non_blocking=True)
+        timestamps = timestamps.to(self.device, non_blocking=True)
+
+        # Mixed precision context is handled automatically by Lightning
+        loss, _, _ = self.forward(samples, timestamps)
+
+        # .item() if you want scalar logging
         self.train_loss_avg.update(loss)
-        self.log('train_loss',
-                 self.train_loss_avg.compute(),
-                 rank_zero_only=True,
-                 batch_size=self.batch_size,
-                 prog_bar=True)
+
+        self.log(
+            'train_loss',
+            self.train_loss_avg.compute(),
+            rank_zero_only=True,
+            batch_size=self.batch_size,
+            prog_bar=True
+        )
 
         return loss
 
@@ -82,7 +86,8 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
     # configure_optimizers
     # -------------------------------------------------------------------------
     def configure_optimizers(self):
-        optimizer = build_optimizer(self.config, self.model, is_pretrain=True)
+        optimizer = build_optimizer(
+            self.config, self.model, is_pretrain=True)
         return optimizer
 
     # -------------------------------------------------------------------------
@@ -95,11 +100,13 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
     # train_dataloader
     # -------------------------------------------------------------------------
     def train_dataloader(self):
-        return DataLoader(self.trainset,
-                          batch_size=None,
-                          shuffle=False,
-                          pin_memory=self.pin_memory,
-                          num_workers=self.num_workers)
+        return DataLoader(
+            self.trainset,
+            batch_size=None,
+            shuffle=False,
+            pin_memory=self.pin_memory,
+            num_workers=self.num_workers
+        )
 
 """
 from pytorch_caney.data.datamodules.satmae_datamodule import (

@@ -57,10 +57,12 @@ class ABITemporalToyDataset(Dataset):
             224,
             224,
         ),
+        in_chans: int = 14,
         transform=None,
     ):
         self.min_year = 2001
         self.img_size = img_size
+        self.in_chans = in_chans
         self.transform = transform
         self.split = split
         self.data_paths = data_paths
@@ -122,7 +124,7 @@ class ABITemporalToyDataset(Dataset):
         img0 = np.random.rand(
             self.img_size,
             self.img_size,
-            14,
+            self.in_chans,
         ).astype(
             np.float32
         )  # np.load(self.img_list[idx])
@@ -131,7 +133,7 @@ class ABITemporalToyDataset(Dataset):
         img1 = np.random.rand(
             self.img_size,
             self.img_size,
-            14,
+            self.in_chans,
         ).astype(
             np.float32
         )  # np.load(self.img_list[idx])
@@ -140,7 +142,7 @@ class ABITemporalToyDataset(Dataset):
         img2 = np.random.rand(
             self.img_size,
             self.img_size,
-            14,
+            self.in_chans,
         ).astype(
             np.float32
         )  # np.load(self.img_list[idx])
@@ -220,6 +222,7 @@ if __name__ == "__main__":
         split="train",
         transform=transform,
         img_size=512,
+        in_chans=3
     )
 
     # get samples

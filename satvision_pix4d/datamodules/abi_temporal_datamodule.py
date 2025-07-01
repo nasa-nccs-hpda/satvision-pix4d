@@ -11,31 +11,26 @@ from satvision_pix4d.datasets.abi_temporal_dataset import ABITemporalToyDataset
 
 
 class ABITemporalDataModule(LightningDataModule):
-    def __init__(
-        self,
-        data_path: list = [],
-        batch_size: int = 32,
-        img_size: int = 192,
-        pin_memory: bool = True,
-        drop_last: bool = False,
-        num_workers: int = multiprocessing.cpu_count(),
-        num_samples: int = None,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.data_paths = data_path
+    def __init__(self, config) -> None:
 
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
-        self.drop_last = drop_last
-        self.num_samples = num_samples
-        self.img_size = img_size
+        super().__init__()
+
+        self.config = config
+        self.batch_size = config.DATA.BATCH_SIZE
+        self.shuffle = config.DATA.SHUFFLE
+        self.num_workers = config.DATA.NUM_WORKERS
+        self.persistent_workers = config.DATA.PERSISTENT_WORKERS
+        self.img_size = config.DATA.IMG_SIZE
+        self.in_chans = config.MODEL.MAE_VIT.IN_CHANS
+        self.train_data_paths = config.DATA.DATA_PATHS
+        self.train_data_length = config.DATA.LENGTH
+        self.pin_memory = config.DATA.PIN_MEMORY
+        self.drop_last = config.DATA.DROP_LAST
 
         self.transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.RandomCrop(img_size),
+                #transforms.RandomCrop(self.img_size),
             ]
         )
 
@@ -88,16 +83,18 @@ class ABITemporalDataModule(LightningDataModule):
         # This is called after Lightning sets up distributed
         logging.info("> Init datasets")
         self.trainset = ABITemporalToyDataset(
-            self.data_paths,
+            self.train_data_paths,
             split="train",
             transform=self.transform,
             img_size=self.img_size,
+            in_chans=self.in_chans
         )
         self.validset = ABITemporalToyDataset(
-            self.data_paths,
+            self.train_data_paths,
             split="valid",
             transform=self.transform,
             img_size=self.img_size,
+            in_chans=self.in_chans
         )
         logging.info("Done init datasets")
         return
@@ -108,11 +105,11 @@ class ABITemporalDataModule(LightningDataModule):
         return DataLoader(
             self.trainset,
             batch_size=self.batch_size,
-            shuffle=True, # Lightning will disable this and add DistributedSampler
-            #sampler=self.trainsampler,
+            shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             drop_last=self.drop_last,
+            persistent_workers=self.persistent_workers
         )
 
     def val_dataloader(

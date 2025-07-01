@@ -298,7 +298,7 @@ class ABITileExtractor:
 
 
             abi_temporal_stack = xr.concat(tiles_stack[f'tile_{tile_id}'], dim="time")
-            print(abi_temporal_stack.shape)
+            print(abi_temporal_stack)
             abi_temporal_stack.chunk(
                 {"time": 1, "band": 1, "y": 512, "x": 512}).to_zarr(f"{tile_id}.zarr", mode="w")
         

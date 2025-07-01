@@ -9,7 +9,7 @@ MODEL:
   DROP_PATH_RATE: 0.1
   MAE_VIT:
     PATCH_SIZE: 16
-    IN_CHANS: 14
+    IN_CHANS: 3
     EMBED_DIM: 768
     DEPTHS: 12
     NUM_HEADS: 12
@@ -21,12 +21,14 @@ MODEL:
 
 DATA:
   DATAMODULE: True
-  BATCH_SIZE: 64 
+  BATCH_SIZE: 4 
   LENGTH: 1_920_000
+  SHUFFLE: True
   PIN_MEMORY: True
   NUM_WORKERS: 4
+  PERSISTENT_WORKERS: True
   DATA_PATHS: [/explore/nobackup/projects/ilab/projects/3DClouds/data/mosaic-v3/webdatasets/shards]
-  IMG_SIZE: 512
+  IMG_SIZE: 224
   MASK_PATCH_SIZE: 8
   MASK_RATIO: 0.6
 
@@ -48,7 +50,9 @@ TRAIN:
 DEEPSPEED:
   STAGE: 2
 
-PRECISION: 'bf16'
+PRECISION: 'bf16-mixed'
+#'16-mixed'
+#'bf16-mixed'
 
 PRINT_FREQ: 10 
 SAVE_FREQ: 50
