@@ -102,6 +102,7 @@ _C.MODEL.MAE_VIT.DECODER_EMBED_DIM = 512
 _C.MODEL.MAE_VIT.DECODER_DEPTH = 8
 _C.MODEL.MAE_VIT.DECODER_NUM_HEADS = 16
 _C.MODEL.MAE_VIT.SAME_MASK = False
+_C.MODEL.MAE_VIT.NORM_PIX_LOSS = False
 
 # -----------------------------------------------------------------------------
 # Training settings

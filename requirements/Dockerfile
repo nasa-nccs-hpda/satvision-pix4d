@@ -99,6 +99,7 @@ RUN pip --no-cache-dir install \
     tiler \
     segmentation-models \
     timm \
+    'mlflow>=1.0.0' \
     supervision \
     pytest \
     coveralls \

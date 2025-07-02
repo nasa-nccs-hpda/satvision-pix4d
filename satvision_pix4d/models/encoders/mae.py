@@ -9,7 +9,7 @@ from satvision_pix4d.models.utils.precision_support import FP32LayerNorm
 # build_satmae_model
 # -----------------------------------------------------------------------------
 def build_satmae_model(config):
-    """Builds the masked-image-modeling model.
+    """Builds the satmae model.
 
     Args:
         config: config object
@@ -25,8 +25,8 @@ def build_satmae_model(config):
     if model_type == 'satmae':
         model = MaskedAutoencoderViTTemporal(
             img_size=config.DATA.IMG_SIZE,
-            in_chans=config.MODEL.MAE_VIT.IN_CHANS,
             patch_size=config.MODEL.MAE_VIT.PATCH_SIZE,
+            in_chans=config.MODEL.MAE_VIT.IN_CHANS,
             embed_dim=config.MODEL.MAE_VIT.EMBED_DIM,
             depth=config.MODEL.MAE_VIT.DEPTHS,
             num_heads=config.MODEL.MAE_VIT.NUM_HEADS,
@@ -34,19 +34,10 @@ def build_satmae_model(config):
             decoder_depth=config.MODEL.MAE_VIT.DECODER_DEPTH,
             decoder_num_heads=config.MODEL.MAE_VIT.DECODER_NUM_HEADS,
             mlp_ratio=config.MODEL.MAE_VIT.MLP_RATIO,
-            norm_layer=partial(FP32LayerNorm, eps=1e-6)
-            #norm_layer=partial(
-            #    nn.LayerNorm,
-            #    eps=1e-6,
-            #),
+            norm_layer=partial(FP32LayerNorm, eps=1e-6),
+            norm_pix_loss=config.MODEL.MAE_VIT.NORM_PIX_LOSS,
+            same_mask=config.MODEL.MAE_VIT.SAME_MASK
         )
-
-        """
-        self, img_size=224, patch_size=16, in_chans=3,
-                        embed_dim=1024, depth=24, num_heads=16,
-                        decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                        mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, same_mask=False
-        """
 
         logging.info(str(model))
     else:
