@@ -76,7 +76,8 @@ RUN git clone --single-branch --branch master https://github.com/pkolano/shift.g
     rm -rf /app
 
 # Pip
-RUN pip install --no-cache-dir --upgrade --force-reinstall blinker && \
+RUN apt-get update && \
+    apt-get remove -y python3-blinker && \
     pip --no-cache-dir install \
     pytorch-lightning \
     Lightning \
