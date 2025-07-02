@@ -37,48 +37,6 @@ class ABITemporalDataModule(LightningDataModule):
         self.trainset = None
         self.validset = None
 
-        #print("> Init datasets")
-        #self.trainset = ABITemporalToyDataset(
-        #    self.data_paths,
-        #    split="train",
-        #    transform=self.transform,
-        #    img_size=img_size,
-        #)
-        #self.validset = ABITemporalToyDataset(
-        #    self.data_paths,
-        #    split="valid",
-        #    transform=self.transform,
-        #    img_size=img_size,
-        #)
-
-        #print("Done init datasets")
-        #(
-        #    self.trainsampler,
-        #    self.validsampler,
-        #) = self.setup_samplers()
-
-    #def setup_samplers(
-    #    self,
-    #):
-    #    trainsampler = DistributedSampler(
-    #        self.trainset,
-    #        num_replicas=dist.get_world_size(),
-    #        rank=dist.get_rank(),
-    #        shuffle=True,
-    #    )
-
-    #    validsampler = DistributedSampler(
-    #        self.validset,
-    #        num_replicas=dist.get_world_size(),
-    #        rank=dist.get_rank(),
-    #        shuffle=False,
-    #    )
-
-    #    return (
-    #        trainsampler,
-    #        validsampler,
-    #    )
-
     def setup(self, stage=None):
         # This is called after Lightning sets up distributed
         logging.info("> Init datasets")
@@ -119,7 +77,6 @@ class ABITemporalDataModule(LightningDataModule):
             self.validset,
             batch_size=self.batch_size,
             shuffle=False,
-            # sampler=self.validsampler,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             drop_last=self.drop_last,

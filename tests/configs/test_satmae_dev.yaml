@@ -9,10 +9,10 @@ MODEL:
   DROP_PATH_RATE: 0.1
   MAE_VIT:
     PATCH_SIZE: 16
-    IN_CHANS: 3
-    EMBED_DIM: 768
-    DEPTHS: 12
-    NUM_HEADS: 12
+    IN_CHANS: 14
+    EMBED_DIM: 1024
+    DEPTHS: 24
+    NUM_HEADS: 16
     MLP_RATIO: 4.0
     DECODER_EMBED_DIM: 512
     DECODER_DEPTH: 8
@@ -28,7 +28,7 @@ DATA:
   NUM_WORKERS: 4
   PERSISTENT_WORKERS: True
   DATA_PATHS: [/explore/nobackup/projects/ilab/projects/3DClouds/data/mosaic-v3/webdatasets/shards]
-  IMG_SIZE: 224
+  IMG_SIZE: 512
   MASK_PATCH_SIZE: 8
   MASK_RATIO: 0.6
 

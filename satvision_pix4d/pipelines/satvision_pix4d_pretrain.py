@@ -7,9 +7,6 @@ from torch.utils.data import DataLoader
 from satvision_pix4d.models.encoders.mae import build_satmae_model
 from satvision_pix4d.optimizers.build import build_optimizer
 
-#from satvision_toa.transforms.mim_modis_toa import MimTransform
-#from satvision_toa.datasets.sharded_dataset import ShardedDataset
-
 
 # -----------------------------------------------------------------------------
 # SatVisionPix4DSatMAEPretrain
@@ -36,7 +33,10 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         self.train_data_length = config.DATA.LENGTH
         self.pin_memory = config.DATA.PIN_MEMORY
 
+        # Metrics
         self.train_loss_avg = torchmetrics.MeanMetric()
+        self.train_psnr = torchmetrics.PeakSignalNoiseRatio(data_range=1.0)
+        self.train_ssim = torchmetrics.StructuralSimilarityIndexMeasure(data_range=1.0)
 
     # -------------------------------------------------------------------------
     # load_checkpoint
@@ -67,18 +67,43 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         timestamps = timestamps.to(self.device, non_blocking=True)
 
         # Mixed precision context is handled automatically by Lightning
-        loss, _, _ = self.forward(samples, timestamps)
+        loss, pred, mask = self.forward(samples, timestamps)
 
         # .item() if you want scalar logging
         self.train_loss_avg.update(loss)
 
-        self.log(
-            'train_loss',
-            self.train_loss_avg.compute(),
-            rank_zero_only=True,
-            batch_size=self.batch_size,
-            prog_bar=True
-        )
+        # Unpatchify reconstruction for metrics and visualization
+        B, T, C, H, W = samples.shape
+        pred_imgs = self.model.unpatchify(pred, T, H, W)
+        pred_imgs = torch.clamp(pred_imgs, 0, 1)
+
+        # Normalize ground truth
+        target_imgs = samples
+
+        # Compute metrics over first timestep only (or all if you prefer)
+        psnr_val = self.train_psnr(pred_imgs[:,0], target_imgs[:,0])
+        ssim_val = self.train_ssim(pred_imgs[:,0], target_imgs[:,0])
+
+        self.log("train_loss", self.train_loss_avg.compute(), prog_bar=True, batch_size=self.batch_size)
+        self.log("train_psnr", psnr_val, prog_bar=True, batch_size=self.batch_size)
+        self.log("train_ssim", ssim_val, prog_bar=True, batch_size=self.batch_size)
+
+        # Log example images once per epoch
+        if batch_idx == 0:
+            # Log first image in batch
+            input_img = target_imgs[0, 0]  # (C,H,W)
+            recon_img = pred_imgs[0, 0]
+
+            # Convert to uint8
+            grid = torch.cat([input_img, recon_img], dim=2)  # side by side
+
+            # Works with MLflow, TensorBoard, WandB
+            self.logger.experiment.add_image(
+                "Input_Reconstruction",
+                grid,
+                self.global_step,
+                dataformats="CHW"
+            )
 
         return loss
 
@@ -95,6 +120,8 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
     # -------------------------------------------------------------------------
     def on_train_epoch_start(self):
         self.train_loss_avg.reset()
+        self.train_psnr.reset()
+        self.train_ssim.reset()
 
     # -------------------------------------------------------------------------
     # train_dataloader
@@ -107,549 +134,3 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
             pin_memory=self.pin_memory,
             num_workers=self.num_workers
         )
-
-"""
-from pytorch_caney.data.datamodules.satmae_datamodule import (
-    SatMAETemporalDataModule,
-)
-
-from pytorch_caney.utils import (
-    save_checkpoint,
-    load_checkpoint,
-)
-
-from pytorch_caney.models.vit_mae_temporal import (
-    MaskedAutoencoderViT,
-)
-
-from pytorch_caney.training.mim_utils import (
-    get_grad_norm,
-)
-from pytorch_caney.lr_scheduler import (
-    setup_scaled_lr,
-)
-import pytorch_caney.lr_scheduler as lr_sched
-from pytorch_caney.ptc_logging import (
-    create_logger,
-)
-from pytorch_caney.config import (
-    get_config,
-)
-
-import argparse
-import datetime
-from functools import (
-    partial,
-)
-import joblib
-import numpy as np
-import os
-import time
-
-import torch
-import torch.nn as nn
-import torch.cuda.amp as amp
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
-
-from timm.utils import (
-    AverageMeter,
-)
-import timm.optim.optim_factory as optim_factory
-
-
-def parse_args():
-    
-    Parse command-line arguments
-    
-    parser = argparse.ArgumentParser(
-        "pytorch-caney implementation of MiM pre-training script",
-        add_help=False,
-    )
-
-    parser.add_argument(
-        "--cfg",
-        type=str,
-        required=True,
-        metavar="FILE",
-        help="path to config file",
-    )
-
-    parser.add_argument(
-        "--data-paths",
-        nargs="+",
-        required=True,
-        help="paths where dataset is stored",
-    )
-
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        help="batch size for single GPU",
-    )
-
-    parser.add_argument(
-        "--resume",
-        help="resume from checkpoint",
-    )
-
-    parser.add_argument(
-        "--accumulation-steps",
-        type=int,
-        help="gradient accumulation steps",
-    )
-
-    parser.add_argument(
-        "--use-checkpoint",
-        action="store_true",
-        help="whether to use gradient checkpointing to save memory",
-    )
-
-    parser.add_argument(
-        "--enable-amp",
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "--disable-amp",
-        action="store_false",
-        dest="enable_amp",
-    )
-
-    parser.set_defaults(enable_amp=True)
-
-    parser.add_argument(
-        "--output",
-        default="output",
-        type=str,
-        metavar="PATH",
-        help="root of output folder, the full path is "
-        + "<output>/<model_name>/<tag> (default: output)",
-    )
-
-    parser.add_argument(
-        "--tag",
-        help="tag of experiment",
-    )
-
-    args = parser.parse_args()
-
-    config = get_config(args)
-
-    return (
-        args,
-        config,
-    )
-
-
-def train(
-    config,
-    dataloader,
-    model,
-    model_wo_ddp,
-    optimizer,
-    scaler,
-):
-    
-    Start pre-training a specific model and dataset.
-
-    Args:
-        config: config object
-        dataloader: dataloader to use
-        model: model to pre-train
-        model_wo_ddp: model to pre-train that is not the DDP version
-        optimizer: pytorch optimizer
-        lr_scheduler: learning-rate scheduler
-        scaler: loss scaler
-    
-
-    logger.info("Start training")
-
-    start_time = time.time()
-
-    for epoch in range(
-        config.TRAIN.START_EPOCH,
-        config.TRAIN.EPOCHS,
-    ):
-        dataloader.sampler.set_epoch(epoch)
-
-        execute_one_epoch(
-            config,
-            model,
-            dataloader,
-            optimizer,
-            epoch,
-            scaler,
-        )
-
-        if dist.get_rank() == 0 and (
-            epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)
-        ):
-            save_checkpoint(
-                config,
-                epoch,
-                model,
-                model_wo_ddp,
-                optimizer,
-                scaler,
-                logger,
-            )
-
-    total_time = time.time() - start_time
-
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-
-    logger.info("Training time {}".format(total_time_str))
-
-
-def execute_one_epoch(
-    config,
-    model,
-    dataloader,
-    optimizer,
-    epoch,
-    scaler,
-):
-    
-    Execute training iterations on a single epoch.
-
-    Args:
-        config: config object
-        model: model to pre-train
-        dataloader: dataloader to use
-        optimizer: pytorch optimizer
-        epoch: int epoch number
-        lr_scheduler: learning-rate scheduler
-        scaler: loss scaler
-    
-
-    model.train()
-
-    optimizer.zero_grad()
-
-    num_steps = len(dataloader)
-
-    # Set up logging meters
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    loss_meter = AverageMeter()
-    norm_meter = AverageMeter()
-    loss_scale_meter = AverageMeter()
-
-    start = time.time()
-    end = time.time()
-    for (
-        idx,
-        (
-            img,
-            timestamps,
-        ),
-    ) in enumerate(dataloader):
-        data_time.update(time.time() - start)
-
-        img = img.cuda(non_blocking=True)
-        timestamps = timestamps.cuda(non_blocking=True)
-
-        with amp.autocast(enabled=config.ENABLE_AMP):
-            (
-                loss,
-                _,
-                _,
-            ) = model(
-                img,
-                timestamps,
-                mask_ratio=config.DATA.MASK_RATIO,
-            )
-
-        if config.TRAIN.ACCUMULATION_STEPS > 1:
-            loss = loss / config.TRAIN.ACCUMULATION_STEPS
-            scaler.scale(loss).backward()
-            loss.backward()
-            if config.TRAIN.CLIP_GRAD:
-                scaler.unscale_(optimizer)
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    config.TRAIN.CLIP_GRAD,
-                )
-            else:
-                grad_norm = get_grad_norm(model.parameters())
-            if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
-                scaler.step(optimizer)
-                optimizer.zero_grad()
-                scaler.update()
-                lr_sched.adjust_learning_rate(
-                    optimizer,
-                    idx / num_steps + epoch,
-                )
-
-        else:
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            if config.TRAIN.CLIP_GRAD:
-                scaler.unscale_(optimizer)
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    config.TRAIN.CLIP_GRAD,
-                )
-            else:
-                grad_norm = get_grad_norm(model.parameters())
-            scaler.step(optimizer)
-            scaler.update()
-            lr_sched.adjust_learning_rate(
-                config,
-                optimizer,
-                epoch,
-            )
-
-        torch.cuda.synchronize()
-
-        loss_meter.update(
-            loss.item(),
-            img.size(0),
-        )
-        norm_meter.update(grad_norm)
-        loss_scale_meter.update(scaler.get_scale())
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        if idx % config.PRINT_FREQ == 0:
-            lr = optimizer.param_groups[0]["lr"]
-            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
-            etas = batch_time.avg * (num_steps - idx)
-            logger.info(
-                f"Train: [{epoch}/{config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t"
-                f"eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t"
-                f"time {batch_time.val:.4f} ({batch_time.avg:.4f})\t"
-                f"data_time {data_time.val:.4f} ({data_time.avg:.4f})\t"
-                f"loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t"
-                f"grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t"
-                f"loss_scale {loss_scale_meter.val:.4f}"
-                + f" ({loss_scale_meter.avg:.4f})\t"
-                f"mem {memory_used:.0f}MB"
-            )
-
-    epoch_time = time.time() - start
-    logger.info(
-        f"EPOCH {epoch} training takes "
-        + f"{datetime.timedelta(seconds=int(epoch_time))}"
-    )
-
-
-def main(
-    config,
-):
-    
-    Starts training process after building the proper model, optimizer, etc.
-
-    Args:
-        config: config object
-    
-
-    satmae_temporal_datamodule = SatMAETemporalDataModule(
-        data_path=[],
-        batch_size=config.DATA.BATCH_SIZE,
-        img_size=config.DATA.IMG_SIZE,
-        pin_memory=True,
-        drop_last=True,
-        num_workers=config.DATA.NUM_WORKERS,
-    )
-
-    pretrain_data_loader = satmae_temporal_datamodule.train_dataloader()
-
-    satmae_model = build_model(
-        config,
-        logger,
-    )
-
-    (
-        model,
-        model_wo_ddp,
-    ) = make_ddp(satmae_model)
-
-    param_groups = optim_factory.param_groups_weight_decay(
-        model_wo_ddp,
-        config.TRAIN.WEIGHT_DECAY,
-    )
-
-    optimizer = torch.optim.AdamW(
-        param_groups,
-        lr=config.TRAIN.BASE_LR,
-        betas=config.TRAIN.OPTIMIZER.BETAS,
-    )
-
-    logger.info(f"Optimizer: {optimizer}")
-
-    n_iter_per_epoch = len(pretrain_data_loader)
-
-    logger.info(f"Number of iterations per epoch {n_iter_per_epoch}")
-
-    scaler = amp.GradScaler()
-
-    if config.MODEL.RESUME:
-        load_checkpoint(
-            config,
-            model_wo_ddp,
-            optimizer,
-            scaler,
-            logger,
-        )
-
-    train(
-        config,
-        pretrain_data_loader,
-        model,
-        model_wo_ddp,
-        optimizer,
-        scaler,
-    )
-
-
-def build_model(
-    config,
-    logger,
-):
-    logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
-
-    model = MaskedAutoencoderViT(
-        img_size=config.DATA.IMG_SIZE,
-        in_chans=config.MODEL.MAE_VIT.IN_CHANS,
-        patch_size=config.MODEL.MAE_VIT.PATCH_SIZE,
-        embed_dim=config.MODEL.MAE_VIT.EMBED_DIM,
-        depth=config.MODEL.MAE_VIT.DEPTHS,
-        num_heads=config.MODEL.MAE_VIT.NUM_HEADS,
-        decoder_embed_dim=config.MODEL.MAE_VIT.DECODER_EMBED_DIM,
-        decoder_depth=config.MODEL.MAE_VIT.DECODER_DEPTH,
-        decoder_num_heads=config.MODEL.MAE_VIT.DECODER_NUM_HEADS,
-        mlp_ratio=config.MODEL.MAE_VIT.MLP_RATIO,
-        norm_layer=partial(
-            nn.LayerNorm,
-            eps=1e-6,
-        ),
-    )
-
-    model.cuda()
-
-    logger.info(str(model))
-
-    return model
-
-
-def make_ddp(
-    model,
-):
-    model = torch.nn.parallel.DistributedDataParallel(
-        model,
-        device_ids=[int(os.environ["RANK"])],
-        broadcast_buffers=False,
-    )
-
-    model_without_ddp = model.module
-
-    return (
-        model,
-        model_without_ddp,
-    )
-
-
-def setup_rank_worldsize():
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
-    else:
-        rank = -1
-        world_size = -1
-    return (
-        rank,
-        world_size,
-    )
-
-
-def setup_distributed_processing(
-    rank,
-    world_size,
-):
-    torch.cuda.set_device(int(os.environ["RANK"]))
-    torch.distributed.init_process_group(
-        backend="nccl",
-        init_method="env://",
-        world_size=world_size,
-        rank=rank,
-    )
-    torch.distributed.barrier()
-
-
-def setup_seeding(
-    config,
-):
-    seed = config.SEED + dist.get_rank()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
-
-if __name__ == "__main__":
-    (
-        _,
-        config,
-    ) = parse_args()
-
-    (
-        rank,
-        world_size,
-    ) = setup_rank_worldsize()
-
-    setup_distributed_processing(
-        rank,
-        world_size,
-    )
-
-    setup_seeding(config)
-
-    cudnn.benchmark = True
-
-    (
-        linear_scaled_lr,
-        linear_scaled_min_lr,
-        linear_scaled_warmup_lr,
-    ) = setup_scaled_lr(config)
-
-    config.defrost()
-    config.TRAIN.BASE_LR = linear_scaled_lr
-    config.TRAIN.WARMUP_LR = linear_scaled_warmup_lr
-    config.TRAIN.MIN_LR = linear_scaled_min_lr
-    config.freeze()
-
-    os.makedirs(
-        config.OUTPUT,
-        exist_ok=True,
-    )
-    logger = create_logger(
-        output_dir=config.OUTPUT,
-        dist_rank=dist.get_rank(),
-        name=f"{config.MODEL.NAME}",
-    )
-
-    if dist.get_rank() == 0:
-        path = os.path.join(
-            config.OUTPUT,
-            "config.json",
-        )
-        with open(
-            path,
-            "w",
-        ) as f:
-            f.write(config.dump())
-        logger.info(f"Full config saved to {path}")
-        logger.info(config.dump())
-        config_file_name = f"{config.TAG}.config.sav"
-        config_file_path = os.path.join(
-            config.OUTPUT,
-            config_file_name,
-        )
-        joblib.dump(
-            config,
-            config_file_path,
-        )
-
-    main(config)
-"""

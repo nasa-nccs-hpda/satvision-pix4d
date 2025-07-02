@@ -7,8 +7,9 @@ import warnings
 
 warnings.filterwarnings("ignore", message=".*cuda capability 7.0.*")
 
-
 from lightning.pytorch import Trainer
+from lightning.pytorch.loggers import MLFlowLogger
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from satvision_pix4d.configs.config import _C, _update_config_from_file
 from satvision_pix4d.utils import get_strategy, get_distributed_train_batches
@@ -22,6 +23,18 @@ from satvision_pix4d.datamodules import DATAMODULES, get_available_datamodules
 def main(config, output_dir):
 
     logging.info('Training')
+
+    # Save configuration path to disk
+    path = os.path.join(
+        output_dir,
+        f"{config.TAG}.config.json"
+    )
+
+    with open(path, "w") as f:
+        f.write(config.dump())
+
+    logging.info(f"Full config saved to {path}")
+    logging.info(config.dump())
 
     # Get the proper pipeline
     available_pipelines = get_available_pipelines()
@@ -41,14 +54,50 @@ def main(config, output_dir):
     # Determine training strategy
     strategy = get_strategy(config)
 
+    # Define core callbacks
+    checkpoint_best = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=3,
+        filename="best-{epoch}-{val_loss:.4f}",
+    )
+    checkpoint_periodic = ModelCheckpoint(
+        every_n_epochs=5,
+        save_top_k=-1,   # Save all checkpoints at the specified interval
+        filename="epoch-{epoch}",
+        save_last=True
+    )
+    lr_monitor_cb = LearningRateMonitor(logging_interval="epoch")
+
+    # MLflow logger
+    mlflow_logger = MLFlowLogger(
+        experiment_name=config.TAG,
+        tracking_uri="file://" + os.path.abspath(config.OUTPUT),
+        tags={
+            "Model": config.MODEL.NAME,
+            "Pipeline": config.PIPELINE,
+            "Notes": config.DESCRIPTION if hasattr(config, "DESCRIPTION") else "",
+        }
+    )
+    mlflow_logger.experiment.log_artifact(
+        mlflow_logger.run_id,
+        path
+    )
+
     trainer = Trainer(
         accelerator=config.TRAIN.ACCELERATOR,
         devices=torch.cuda.device_count(),
         strategy=strategy,
-        precision="32",#config.PRECISION,
+        precision=config.PRECISION,
         max_epochs=config.TRAIN.EPOCHS,
         log_every_n_steps=config.PRINT_FREQ,
         default_root_dir=output_dir,
+        callbacks=[
+            checkpoint_best,
+            checkpoint_periodic,
+            lr_monitor_cb
+        ],
+        logger=mlflow_logger
     )
 
     # limit the number of train batches for debugging
@@ -116,17 +165,5 @@ if __name__ == "__main__":
     logging.info(f'Output directory: {output_dir}')
     os.makedirs(output_dir, exist_ok=True)
 
-    path = os.path.join(
-        output_dir,
-        f"{config.TAG}.config.json"
-    )
-
-    with open(path, "w") as f:
-        f.write(config.dump())
-
-    logging.info(f"Full config saved to {path}")
-    logging.info(config.dump())
-
     # start main execution
     main(config, output_dir)
-
