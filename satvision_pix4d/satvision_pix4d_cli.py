@@ -72,7 +72,8 @@ def main(config, output_dir):
     # MLflow logger
     mlflow_logger = MLFlowLogger(
         experiment_name=config.TAG,
-        tracking_uri="file://" + os.path.abspath(config.OUTPUT),
+        # tracking_uri="file://" + os.path.abspath(config.OUTPUT),
+        tracking_uri="file:///explore/nobackup/projects/pix4dcloud/mlruns",
         tags={
             "Model": config.MODEL.NAME,
             "Pipeline": config.PIPELINE,

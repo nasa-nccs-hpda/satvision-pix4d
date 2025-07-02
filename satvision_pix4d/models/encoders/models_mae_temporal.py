@@ -126,7 +126,17 @@ class MaskedAutoencoderViT(nn.Module):
         ts_embed = torch.cat(ts_embed_list, dim=1)
         ts_embed = ts_embed.reshape(B,T,1,-1).expand(B,T,L_per_step,-1).reshape(B,T*L_per_step,-1)
 
-        x = x_emb + torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        # modifications to support mixed precision
+        # works
+        # x = x_emb + torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        # does not work
+        # embedding = torch.cat([pos_embed_spatial, ts_embed], dim=-1).to(x.dtype)
+        # x = x + embedding
+        # Cast each component BEFORE concatenation
+        pos_embed_spatial = pos_embed_spatial.to(x_emb.dtype)
+        ts_embed = ts_embed.to(x_emb.dtype)
+        embedding = torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        x = x_emb + embedding
 
         x, mask, ids_restore = self.random_masking(x, mask_ratio, mask=mask)
         cls_token = self.cls_token.expand(B, -1, -1)
@@ -173,7 +183,12 @@ class MaskedAutoencoderViT(nn.Module):
             ts_embed
         ], dim=1)
 
-        x = x + torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        # modifications to support mixed precision
+        # x = x + torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        pos_embed_spatial = pos_embed_spatial.to(x.dtype)
+        ts_embed = ts_embed.to(x.dtype)
+        embedding = torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        x = x + embedding
 
         for blk in self.decoder_blocks:
             x = blk(x)

@@ -35,8 +35,8 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
         # Metrics
         self.train_loss_avg = torchmetrics.MeanMetric()
-        self.train_psnr = torchmetrics.PeakSignalNoiseRatio(data_range=1.0)
-        self.train_ssim = torchmetrics.StructuralSimilarityIndexMeasure(data_range=1.0)
+        self.train_psnr = torchmetrics.image.PeakSignalNoiseRatio(data_range=1.0)
+        self.train_ssim = torchmetrics.image.StructuralSimilarityIndexMeasure(data_range=1.0)
 
     # -------------------------------------------------------------------------
     # load_checkpoint
