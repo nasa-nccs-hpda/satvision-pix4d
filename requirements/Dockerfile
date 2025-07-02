@@ -100,6 +100,7 @@ RUN pip --no-cache-dir install \
     segmentation-models \
     timm \
     'mlflow>=1.0.0' \
+    flash-attn \
     supervision \
     pytest \
     coveralls \

@@ -18,6 +18,7 @@ singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/
 ### Gathering Some Metrics
 
 - Just to stack the 16 bands for a single time period ~40GB max of RAM, 3 minutes 30 seconds (need 7 timesteps)
+- Doing sliding windows of 14 timesteps to get the best 7 timesteps windows
 
 ## Stratified Tiles Generator
 
@@ -30,3 +31,24 @@ singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/
 ### Bucket #2: Cloud Feature Tiles
 
 ### Bucket #3: Land Cover Tiles
+
+## Pre-training
+
+### Development Mode
+
+Shell into the container:
+
+```bash
+singularity shell --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/lscratch /lscratch/jacaraba/container/satvision-pix4d
+```
+
+Testing SatMAE:
+
+```bash
+TRITON_CACHE_DIR="/lscratch/jacaraba/triton_cache" python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/satvision_pix4d_cli.py -c /explore/nobackup/people/jacaraba/development/satvision-pix4d/tests/configs/test_satmae_dev.yaml
+```
+
+### Actual Runs
+
+```bash
+```
