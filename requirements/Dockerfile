@@ -76,7 +76,8 @@ RUN git clone --single-branch --branch master https://github.com/pkolano/shift.g
     rm -rf /app
 
 # Pip
-RUN pip --no-cache-dir --ignore-installed blinker install \
+RUN pip install --no-cache-dir --upgrade --force-reinstall blinker && \
+    pip --no-cache-dir install \
     pytorch-lightning \
     Lightning \
     transformers \
