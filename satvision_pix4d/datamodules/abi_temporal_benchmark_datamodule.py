@@ -7,10 +7,11 @@ from torch.utils.data import DataLoader, DistributedSampler
 from lightning.pytorch import LightningDataModule
 
 # placeholder for testing
-from satvision_pix4d.datasets.abi_temporal_dataset import ABITemporalDataset
+from satvision_pix4d.datasets.abi_temporal_benchmark_dataset \
+    import ABITemporalBenchmarkDataset
 
 
-class ABITemporalDataModule(LightningDataModule):
+class ABITemporalBenchmarkDataModule(LightningDataModule):
     def __init__(self, config) -> None:
 
         super().__init__()
@@ -40,14 +41,14 @@ class ABITemporalDataModule(LightningDataModule):
     def setup(self, stage=None):
         # This is called after Lightning sets up distributed
         logging.info("> Init datasets")
-        self.trainset = ABITemporalDataset(
+        self.trainset = ABITemporalBenchmarkDataset(
             self.train_data_paths,
             split="train",
             transform=self.transform,
             img_size=self.img_size,
             in_chans=self.in_chans
         )
-        self.validset = ABITemporalDataset(
+        self.validset = ABITemporalBenchmarkDataset(
             self.train_data_paths,
             split="valid",
             transform=self.transform,
@@ -68,7 +69,7 @@ class ABITemporalDataModule(LightningDataModule):
             pin_memory=self.pin_memory,
             drop_last=self.drop_last,
             persistent_workers=self.persistent_workers,
-            prefetch_factor=4
+            prefetch_factor=8
         )
 
     def val_dataloader(
@@ -82,7 +83,7 @@ class ABITemporalDataModule(LightningDataModule):
             pin_memory=self.pin_memory,
             drop_last=self.drop_last,
             persistent_workers=self.persistent_workers,
-            prefetch_factor=4
+            prefetch_factor=8
         )
 
     def plot(*args, **kwargs):
@@ -91,4 +92,4 @@ class ABITemporalDataModule(LightningDataModule):
 
 if __name__ == "__main__":
 
-    toa_module = ABITemporalDataModule(data_path=[])
+    toa_module = ABITemporalBenchmarkDataModule(data_path=[])

@@ -6,13 +6,33 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 
 
-class ABITemporalDataset(Dataset):
-    """
-    ABITemporalDataset designed for Pix4D-CloudMAE and SatMAE variants
-    """
+def generate_random_date_str(idx):
+    if idx == 0:
+        year = random.randint(2001, 2006)
+    elif idx == 1:
+        year = random.randint(2007, 2015)
+    elif idx == 2:
+        year = random.randint(2016, 2022)
+    else:
+        # To support more indices, just loop over periods
+        periods = [
+            (2001, 2006),
+            (2007, 2015),
+            (2016, 2022),
+        ]
+        selected = periods[idx % len(periods)]
+        year = random.randint(*selected)
 
-    IMAGE_PATH = os.path.join("images")
-    MASK_PATH = os.path.join("labels")
+    month = random.randint(1, 12)
+    hour = random.randint(1, 24)
+    date_str = f"{year:04d}-{month:02d}-28T{hour:02d}:43:59Z"
+    return date_str
+
+
+class ABITemporalBenchmarkDataset(Dataset):
+    """
+    ABITemporalToyDataset designed for Pix4D-CloudMAE and SatMAE variants
+    """
 
     def __init__(
         self,
@@ -23,7 +43,7 @@ class ABITemporalDataset(Dataset):
         num_timesteps: int = 7,
         transform=None,
     ):
-        self.min_year = 2000
+        self.min_year = 2001
         self.img_size = img_size
         self.in_chans = in_chans
         self.num_timesteps = num_timesteps
@@ -108,7 +128,7 @@ if __name__ == "__main__":
     )
 
     # Instantiate toy dataset with 7 timesteps
-    train_ds = ABITemporalDataset(
+    train_ds = ABITemporalBenchmarkDataset(
         data_paths=[],
         split="train",
         transform=transform,

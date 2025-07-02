@@ -1,5 +1,5 @@
 PIPELINE: 'satvision_pix4d_satmae_pretrain'
-DATAMODULE: 'abi_temporal'
+DATAMODULE: 'abi_temporal_benchmark'
 
 OUTPUT: '/explore/nobackup/projects/pix4dcloud/jacaraba/model_development/satmae'
 
@@ -21,7 +21,7 @@ MODEL:
 
 DATA:
   DATAMODULE: True
-  BATCH_SIZE: 4 
+  BATCH_SIZE: 8 
   LENGTH: 1_920_000
   SHUFFLE: True
   PIN_MEMORY: True
@@ -36,7 +36,7 @@ TRAIN:
   ACCELERATOR: 'gpu'
   STRATEGY: 'deepspeed'
   USE_CHECKPOINT: True
-  EPOCHS: 50 
+  EPOCHS: 50
   WARMUP_EPOCHS: 10
   BASE_LR: 3e-4
   MIN_LR: 2e-4
@@ -51,8 +51,6 @@ DEEPSPEED:
   STAGE: 2
 
 PRECISION: 'bf16-mixed'
-#'16-mixed'
-#'bf16-mixed'
 
 PRINT_FREQ: 10 
 SAVE_FREQ: 50

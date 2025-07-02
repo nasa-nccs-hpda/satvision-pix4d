@@ -91,6 +91,8 @@ def main(config, output_dir):
         strategy=strategy,
         precision=config.PRECISION,
         max_epochs=config.TRAIN.EPOCHS,
+        gradient_clip_val=1.0,
+        # accumulate_grad_batches=getattr(config.TRAIN, "ACCUM_ITER", 1),  # If you have gradient accumulation
         log_every_n_steps=config.PRINT_FREQ,
         default_root_dir=output_dir,
         callbacks=[
