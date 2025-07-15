@@ -22,17 +22,19 @@ class ABITemporalDataModule(LightningDataModule):
         self.persistent_workers = config.DATA.PERSISTENT_WORKERS
         self.img_size = config.DATA.IMG_SIZE
         self.in_chans = config.MODEL.MAE_VIT.IN_CHANS
-        self.train_data_paths = config.DATA.DATA_PATHS
+        self.train_data_paths = config.DATA.TRAIN_DATA_PATHS
+        self.val_data_paths = config.DATA.VAL_DATA_PATHS
         self.train_data_length = config.DATA.LENGTH
         self.pin_memory = config.DATA.PIN_MEMORY
         self.drop_last = config.DATA.DROP_LAST
 
-        self.transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                #transforms.RandomCrop(self.img_size),
-            ]
-        )
+        self.transform = None 
+        #transforms.Compose(
+        #    [
+        #        transforms.ToTensor(),
+        #        #transforms.RandomCrop(self.img_size),
+        #    ]
+        #)
 
         self.trainset = None
         self.validset = None
@@ -42,14 +44,12 @@ class ABITemporalDataModule(LightningDataModule):
         logging.info("> Init datasets")
         self.trainset = ABITemporalDataset(
             self.train_data_paths,
-            split="train",
             transform=self.transform,
             img_size=self.img_size,
             in_chans=self.in_chans
         )
         self.validset = ABITemporalDataset(
-            self.train_data_paths,
-            split="valid",
+            self.val_data_paths,
             transform=self.transform,
             img_size=self.img_size,
             in_chans=self.in_chans
