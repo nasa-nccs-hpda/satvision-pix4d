@@ -18,7 +18,9 @@ _C.DATA.DATAMODULE = True
 # Batch size for a single GPU, could be overwritten by command line argument
 _C.DATA.BATCH_SIZE = 128
 # Path(s) to dataset, could be overwritten by command line argument
-_C.DATA.DATA_PATHS = ['']
+_C.DATA.TRAIN_DATA_PATHS = ['']
+# Path(s) to dataset, could be overwritten by command line argument
+_C.DATA.VAL_DATA_PATHS = ['']
 # Path(s) to the validation/test dataset
 _C.DATA.TEST_DATA_PATHS = ['']
 # Path(s) to dataset masks
@@ -256,8 +258,10 @@ def update_config(config, args):
     # merge from specific arguments
     if _check_args('batch_size'):
         config.DATA.BATCH_SIZE = args.batch_size
-    if _check_args('data_paths'):
-        config.DATA.DATA_PATHS = args.data_paths
+    if _check_args('train_data_paths'):
+        config.DATA.TRAIN_DATA_PATHS = args.train_data_paths
+    if _check_args('val_data_paths'):
+        config.DATA.VAL_DATA_PATHS = args.val_data_paths
     if _check_args('validation_path'):
         config.DATA.VALIDATION_PATH = args.validation_path
     if _check_args('dataset'):

@@ -24,8 +24,6 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         self.batch_size = config.DATA.BATCH_SIZE
         self.num_workers = config.DATA.NUM_WORKERS
         self.img_size = config.DATA.IMG_SIZE
-        self.train_data_paths = config.DATA.DATA_PATHS
-        self.train_data_length = config.DATA.LENGTH
         self.pin_memory = config.DATA.PIN_MEMORY
 
         # Training Metrics

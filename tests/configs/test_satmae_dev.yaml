@@ -1,5 +1,5 @@
 PIPELINE: 'satvision_pix4d_satmae_pretrain'
-DATAMODULE: 'abi_temporal_benchmark'
+DATAMODULE: 'abi_temporal'
 
 OUTPUT: '/explore/nobackup/projects/pix4dcloud/jacaraba/model_development/satmae'
 
@@ -9,7 +9,7 @@ MODEL:
   DROP_PATH_RATE: 0.1
   MAE_VIT:
     PATCH_SIZE: 16
-    IN_CHANS: 14
+    IN_CHANS: 16
     EMBED_DIM: 1024
     DEPTHS: 24
     NUM_HEADS: 16
@@ -21,13 +21,14 @@ MODEL:
 
 DATA:
   DATAMODULE: True
-  BATCH_SIZE: 8 
+  BATCH_SIZE: 1
   LENGTH: 1_920_000
   SHUFFLE: True
   PIN_MEMORY: True
   NUM_WORKERS: 4
   PERSISTENT_WORKERS: True
-  DATA_PATHS: [/explore/nobackup/projects/ilab/projects/3DClouds/data/mosaic-v3/webdatasets/shards]
+  TRAIN_DATA_PATHS: ["/home/jacaraba/tiles_pix4d"]
+  VAL_DATA_PATHS: ["/home/jacaraba/tiles_pix4d"]
   IMG_SIZE: 512
   MASK_PATCH_SIZE: 8
   MASK_RATIO: 0.6

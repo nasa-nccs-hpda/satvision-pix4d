@@ -1,123 +1,116 @@
+
 import os
+import glob
 import torch
-import random
+import logging
 import numpy as np
-import torchvision.transforms as transforms
+import xarray as xr
+import pandas as pd
 from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 
 
 class ABITemporalDataset(Dataset):
     """
-    ABITemporalDataset designed for Pix4D-CloudMAE and SatMAE variants
+    ABITemporalDataset for .zarr files in specified directories.
+    Each file must have shape [time, band, y, x].
     """
-
-    IMAGE_PATH = os.path.join("images")
-    MASK_PATH = os.path.join("labels")
 
     def __init__(
         self,
         data_paths: list,
-        split: str,
-        img_size: int = 224,
-        in_chans: int = 14,
-        num_timesteps: int = 7,
+        img_size: int = 512,
+        in_chans: int = 16,
+        temporal_embeddings: list = None,
         transform=None,
     ):
         self.min_year = 2000
         self.img_size = img_size
         self.in_chans = in_chans
-        self.num_timesteps = num_timesteps
         self.transform = transform
-        self.split = split
-        self.data_paths = data_paths
 
-        self.img_list = sorted(list(range(0, 250000)))
-        self.mask_list = sorted(list(range(0, 250000)))
+        if temporal_embeddings is None:
+            self.temporal_embeddings = ["year", "month", "hour"]
+        else:
+            self.temporal_embeddings = temporal_embeddings
 
-        random_inst = random.Random(12345)
-        n_items = len(self.img_list)
-        print(f"Found {n_items} possible patches to use")
+        # Find all .zarr files in given directories
+        self.files = []
+        for p in data_paths:
+            self.files.extend(sorted(glob.glob(os.path.join(p, "*.zarr"))))
 
-        range_n_items = range(n_items)
-        idxs = set(random_inst.sample(range_n_items, len(range_n_items) // 5))
-        total_idxs = set(range_n_items)
-        if split == "train":
-            idxs = total_idxs - idxs
+        if not self.files:
+            raise RuntimeError("No .zarr files found in provided paths!")
 
-        print(f"> Using {len(idxs)} patches for this dataset ({split})")
-        self.img_list = [self.img_list[i] for i in idxs]
-        self.mask_list = [self.mask_list[i] for i in idxs]
-        print(f">> {split}: {len(self.img_list)}")
+        logging.info(f"Loaded {len(self.files)} files.")
 
     def __len__(self):
-        return len(self.img_list)
+        return len(self.files)
 
-    def __getitem__(self, idx, transpose=True):
-        imgs = []
-        timestamps = []
+    def __getitem__(self, idx):
+        path = self.files[idx]
 
-        for t in range(self.num_timesteps):
-            # Create random image
-            img = np.random.rand(
-                self.img_size,
-                self.img_size,
-                self.in_chans,
-            ).astype(np.float32)
-            if self.transform:
-                img = self.transform(img)
-            else:
-                img = torch.from_numpy(img).permute(2,0,1)
+        # Load dataset
+        ds = xr.open_zarr(path)
 
-            imgs.append(img)
+        # Get Rad: (time, band, y, x)
+        rad = ds["Rad"].values.astype(np.float32)
+        rad = rad[:, :self.in_chans, :, :]
+        rad = np.nan_to_num(rad, nan=0.0)
+        # print(idx, np.isnan(rad).any())
 
-            # Generate timestamp
-            ts = self.parse_ts(generate_random_date_str(t))
-            timestamps.append(ts)
+        # Convert to torch tensor (T, C, H, W)
+        tensor = torch.from_numpy(rad)
 
-        imgs = torch.stack(imgs, dim=0)  # (T, C, H, W)
-        ts = np.stack(timestamps, axis=0)  # (T, 3)
+        # Extract timestamps: (time, band)
+        t = ds["t"].values
+        t_per_time = t[:, 0]  # use first band timestamp per time
 
-        return imgs, ts
+        # Vectorized datetime parsing
+        pd_timestamps = pd.to_datetime(t_per_time)
 
-    def get_filenames(self, path):
-        files_list = []
-        for filename in sorted(os.listdir(path)):
-            files_list.append(os.path.join(path, filename))
-        return files_list
+        emb_map = {
+            "year": pd_timestamps.year - self.min_year,
+            "month": pd_timestamps.month - 1,
+            "day": pd_timestamps.day - 1,
+            "hour": pd_timestamps.hour,
+            "minute": pd_timestamps.minute
+        }
 
-    def parse_ts(self, timestamp):
-        year = int(timestamp[:4])
-        month = int(timestamp[5:7])
-        hour = int(timestamp[11:13])
-        return np.array(
-            [
-                year - self.min_year,
-                month - 1,
-                hour,
-            ]
-        )
+        timestamps = np.stack(
+            [emb_map[k] for k in self.temporal_embeddings],
+            axis=1
+        ).astype(np.int32)
+
+        if self.transform:
+            tensor = self.transform(tensor)
+
+        return tensor, timestamps
 
 
 if __name__ == "__main__":
-    # Define simple transform
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.RandomCrop(512),
-        ]
-    )
+    # Example directory list
+    train_dirs = ["/home/jacaraba/tiles_pix4d"]
 
-    # Instantiate toy dataset with 7 timesteps
+    # Train dataset
     train_ds = ABITemporalDataset(
-        data_paths=[],
-        split="train",
-        transform=transform,
+        data_paths=train_dirs,
         img_size=512,
-        in_chans=3,
-        num_timesteps=7
+        in_chans=14
     )
 
-    # Get sample
-    imgs, ts = train_ds.__getitem__(idx=12)
-    print("Timestamps:\n", ts)
-    print("Image tensor shape:", imgs.shape)
+    # DataLoader example
+    train_loader = torch.utils.data.DataLoader(
+        train_ds,
+        batch_size=2,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
+
+    # First batch
+    for imgs, ts in train_loader:
+        print("Images:", imgs.shape)   # (B, T, C, H, W)
+        print("Timestamps:", ts.shape) # (B, T, n_components)
+        print(ts)
+        break
