@@ -13,6 +13,7 @@ from multiprocessing import Pool
 from pathlib import Path
 from scipy.spatial import cKDTree
 
+
 class ABIConvectionTileExtractor:
     def __init__(
         self,
@@ -96,29 +97,47 @@ class ABIConvectionTileExtractor:
 
     def _download_abi_stack(self, dt, satellite):
         band_stack = []
+        missing_bands = []
+
         for ch in self.channels:
             key = (dt, satellite, ch)
             if key in self._abi_band_cache:
                 rad = self._abi_band_cache[key]
             else:
-                ds = goes_nearesttime(
-                    attime=dt,
-                    satellite="goes16" if satellite == "GOES-East" else "goes17",
-                    product=self.product,
-                    domain=self.domain,
-                    download=self.download,
-                    overwrite=self.overwrite,
-                    return_as="xarray",
-                    bands=ch,
-                    verbose=False,
-                    save_dir=self.data_output_dir
-                )
+                try:
+                    ds = goes_nearesttime(
+                        attime=dt,
+                        satellite="goes16" if satellite == "GOES-East" else "goes17",
+                        product=self.product,
+                        domain=self.domain,
+                        download=self.download,
+                        overwrite=self.overwrite,
+                        return_as="xarray",
+                        bands=ch,
+                        verbose=False,
+                        save_dir=self.data_output_dir,
+                    )
+                #except FileNotFoundError:
+                except:
+                    missing_bands.append(ch)
+                    continue
+
                 rad = self._prepare_rad(ds["Rad"])
                 self._abi_band_cache[key] = rad
-                logging.info(
-                    f"Downloaded {satellite} band {ch} for {dt}")
+
             band_stack.append(rad)
+
+        if missing_bands:
+            logging.warning(
+                f"⚠️ Skipping timestep {dt} ({satellite}): missing bands {missing_bands}"
+            )
+            raise RuntimeError(
+                f"Missing bands {missing_bands} for timestep {dt}. Skipping."
+            )
+
         return xr.concat(band_stack, dim="band")
+
+
 
     def _extract_tile(self, arr, center_y, center_x):
         half = self.tile_size // 2
@@ -133,91 +152,71 @@ class ABIConvectionTileExtractor:
             convection_metadata_df["inside_inner_disk"] == True
         ].reset_index(drop=True)
 
-        records = []
+        # Process each record independently (no deduplication)
+        for _, rec in tqdm(
+            convection_metadata_df.iterrows(),
+            total=len(convection_metadata_df),
+            desc="Extracting ABI tiles"
+        ):
+            dt = pd.to_datetime(rec["datetime"])
+            satellite = rec["satellite"]
 
-        # Process each satellite separately so the KDTree matches
-        for satellite in ["GOES-East", "GOES-West"]:
-            sat_df = convection_metadata_df[convection_metadata_df["satellite"] == satellite]
-            if sat_df.empty:
+            if pd.isna(satellite):
+                logging.warning(f"Skipping system {rec['system_id']} with NaN satellite.")
                 continue
 
             lat_grid, lon_grid = self._load_latlon(satellite)
             lat_flat = lat_grid.ravel()
             lon_flat = lon_grid.ravel()
 
-            # Build a KDTree of (lat, lon) grid
-            tree = cKDTree(np.c_[lat_flat, lon_flat])
+            # Find nearest grid point
+            dist = np.sqrt(
+                (lat_flat - rec["latitude"]) ** 2 +
+                (lon_flat - rec["longitude"]) ** 2
+            )
+            idx_min = dist.argmin()
+            y_idx, x_idx = np.unravel_index(idx_min, lat_grid.shape)
 
-            # Query all points at once
-            query_points = np.c_[sat_df["latitude"].values, sat_df["longitude"].values]
-            dists, indices = tree.query(query_points, k=1)
-
-            # Convert indices back to 2D pixel indices
-            y_idx, x_idx = np.unravel_index(indices, lat_grid.shape)
             y_idx -= 1600
             x_idx -= 1600
 
-            # Compute tile centers
+            # Compute center tile indices
             y_tile = (y_idx // self.tile_size) * self.tile_size + self.tile_size // 2
             x_tile = (x_idx // self.tile_size) * self.tile_size + self.tile_size // 2
 
-            # Store records
-            for i, (_, rec) in enumerate(sat_df.iterrows()):
-                records.append({
-                    "satellite": satellite,
-                    "y_tile": y_tile[i],
-                    "x_tile": x_tile[i],
-                    "datetime": pd.to_datetime(rec["datetime"]),
-                    "system_id": rec["system_id"]
-                })
+            # Random position index [0-6]
+            conv_idx = np.random.randint(0, 7)
 
-        df_tiles = pd.DataFrame(records)
-        logging.info(
-            f'Original systems, {df_tiles_unique.shape[0]} tiles to process.')
+            # Compute the first timestep so that dt lands at conv_idx
+            dt_start = dt - timedelta(minutes=20 * conv_idx)
 
-        # 🟢 Remove duplicates per satellite+tile center
-        df_tiles_unique = df_tiles.drop_duplicates(
-            subset=["satellite", "y_tile", "x_tile"])
-        logging.info(
-            f'Removed duplicates, {df_tiles_unique.shape[0]} tiles left.')
+            # 7 timesteps
+            times = [dt_start + timedelta(minutes=20 * i) for i in range(7)]
 
-        # 🟢 Extract tiles
-        for _, row in tqdm(df_tiles_unique.iterrows(), total=len(df_tiles_unique), desc="Extracting ABI tiles"):
+            tile_list = []
+            for t in times:
+                abi_stack = self._download_abi_stack(t, satellite)
+                tile = self._extract_tile(abi_stack, y_tile, x_tile)
 
-            satellite = row["satellite"]
-            y_tile = row["y_tile"]
-            x_tile = row["x_tile"]
-            dt = row["datetime"]
-
-            times = [dt + timedelta(minutes=20 * i) for i in range(-7, 7)]
-            offsets = {
-                "center": (0, 0),
-                "top": (-self.tile_size // 2, 0),
-                "bottom": (self.tile_size // 2, 0),
-                "left": (0, -self.tile_size // 2),
-                "right": (0, self.tile_size // 2)
-            }
-
-            for pos, (dy, dx) in offsets.items():
-                tile_list = []
-                for t in times:
-                    abi_stack = self._download_abi_stack(t, satellite)
-                    tile = self._extract_tile(abi_stack, y_tile + dy, x_tile + dx)
-                    if np.all(np.isnan(tile.values)):
-                        logging.warning(f"Skipping {t} empty tile")
-                        continue
-                    tile_list.append(tile)
-
-                if not tile_list:
+                if np.all(np.isnan(tile.values)):
+                    logging.warning(f"Skipping {t}: empty tile")
                     continue
 
-                time_stack = xr.concat(tile_list, dim="time")
-                filename = os.path.join(
-                    self.convection_tiles_output_dir,
-                    f"{satellite.replace('-','')}_abi_{dt.strftime('%Y%m%dT%H%M')}_ytile{y_tile}_xtile{x_tile}_{pos}.zarr"
-                )
-                time_stack.chunk({"time": 1, "band": 1, "y": 512, "x": 512}).to_zarr(filename, mode="w")
-                logging.info(f"Saved {filename}")
+                tile_list.append(tile)
+
+            if not tile_list:
+                logging.warning(f"No valid tiles for system {rec['system_id']}")
+                continue
+
+            time_stack = xr.concat(tile_list, dim="time")
+            filename = os.path.join(
+                self.convection_tiles_output_dir,
+                f"{satellite.replace('-','')}_abi_{dt.strftime('%Y%m%dT%H%M')}_sys{rec['system_id']}.zarr"
+            )
+            time_stack.chunk({"time": 1, "band": 1, "y": 512, "x": 512}).to_zarr(filename, mode="w")
+            logging.info(
+                f"Saved {filename} (convective timestep index: {conv_idx})"
+            )
 
     def clear_cache(self):
         self._abi_band_cache.clear()
@@ -226,10 +225,7 @@ def process_csv(csv_path):
     df = pd.read_csv(csv_path)
     logging.info(f'Processing {csv_path}')
     extractor = ABIConvectionTileExtractor(
-        output_dir=os.path.join(
-            "/explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d/3-tiles/convection",
-            f"abi_tiles_{Path(csv_path).stem}"
-        ),
+        output_dir="/explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d",
         tile_size=512,
         channels=list(range(1, 17)),
         download=True,
@@ -241,6 +237,9 @@ def process_csv(csv_path):
 
 
 if __name__ == "__main__":
+
+    import multiprocessing
+    multiprocessing.set_start_method("spawn", force=True)
 
     csv_files = glob(
         "/explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d/1-metadata/convection-filtered/2020*_cloudsystems_metadata.csv"
