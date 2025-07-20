@@ -50,6 +50,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           file: ./requirements/Dockerfile.v100
           push: true
           tags: nasanccs/satvision-pix4d:v100
