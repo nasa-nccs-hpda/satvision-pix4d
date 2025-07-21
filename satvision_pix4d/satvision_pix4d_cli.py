@@ -56,13 +56,15 @@ def main(config, output_dir):
 
     # Define core callbacks
     checkpoint_best = ModelCheckpoint(
+        dirpath=output_dir,
         monitor="val_loss",
         mode="min",
         save_top_k=3,
         filename="best-{epoch}-{val_loss:.4f}",
     )
     checkpoint_periodic = ModelCheckpoint(
-        every_n_epochs=5,
+        dirpath=output_dir,
+        every_n_epochs=1,
         save_top_k=-1,   # Save all checkpoints at the specified interval
         filename="epoch-{epoch}",
         save_last=True
