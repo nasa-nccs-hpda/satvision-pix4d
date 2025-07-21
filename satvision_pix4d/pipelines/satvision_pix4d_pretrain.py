@@ -18,8 +18,8 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         self.config = config
 
         self.model = build_satmae_model(self.config)
-        if self.config.MODEL.PRETRAINED:
-            self.load_checkpoint()
+        # if self.config.MODEL.PRETRAINED:
+        #    self.load_checkpoint()
 
         self.batch_size = config.DATA.BATCH_SIZE
         self.num_workers = config.DATA.NUM_WORKERS
@@ -36,11 +36,35 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         self.val_psnr = torchmetrics.image.PeakSignalNoiseRatio(data_range=1.0)
         self.val_ssim = torchmetrics.image.StructuralSimilarityIndexMeasure(data_range=1.0)
 
-    def load_checkpoint(self):
-        logging.info(f'Loading checkpoint from {self.config.MODEL.PRETRAINED}')
-        checkpoint = torch.load(self.config.MODEL.PRETRAINED)
-        self.model.load_state_dict(checkpoint['module'])
-        logging.info('Successfully applied checkpoint')
+    @classmethod
+    def load_checkpoint(cls, ckpt_path, config):
+        """
+        Load model from either a Lightning .ckpt file or a DeepSpeed .pt checkpoint.
+        """
+        if ckpt_path.endswith(".pt") or "mp_rank" in ckpt_path:
+            logging.info(f"Loading DeepSpeed checkpoint: {ckpt_path}")
+            model = cls(config)
+
+            checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            state_dict = checkpoint.get("module", checkpoint)
+
+            # Strip "model." prefix if present
+            cleaned_state_dict = {
+                k.replace("model.", "", 1) if k.startswith("model.") else k: v
+                for k, v in state_dict.items()
+            }
+
+            missing_keys, unexpected_keys = model.model.load_state_dict(
+                cleaned_state_dict, strict=False
+            )
+
+            logging.info(f"Loaded DeepSpeed weights with {len(missing_keys)} missing and {len(unexpected_keys)} unexpected keys.")
+            return model
+
+        else:
+            logging.info(f"Loading Lightning checkpoint: {ckpt_path}")
+            return cls.load_from_checkpoint(ckpt_path, config=config)
+
 
     def forward(self, samples, timestamps):
         return self.model(samples, timestamps, mask_ratio=self.config.DATA.MASK_RATIO)
