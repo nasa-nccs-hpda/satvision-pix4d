@@ -80,6 +80,7 @@ RUN apt-get update && \
     apt-get remove -y python3-blinker && \
     pip --no-cache-dir install \
     pytorch-lightning \
+    numpy<2 \
     Lightning \
     transformers \
     datasets \
