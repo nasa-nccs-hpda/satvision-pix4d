@@ -78,7 +78,7 @@ RUN git clone --single-branch --branch master https://github.com/pkolano/shift.g
 # Pip
 RUN pip --no-cache-dir install \
     pytorch-lightning \
-    numpy<2 \
+    'numpy<2' \
     Lightning \
     transformers \
     datasets \
@@ -117,7 +117,6 @@ RUN pip --no-cache-dir install \
     netCDF4 \
     h5py \
     goes2go
-    # git+https://github.com/nasa-nccs-hpda/satvision-toa.git@main
 
 HEALTHCHECK NONE
 ENTRYPOINT []
