@@ -11,6 +11,55 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+    - 
+      name: Lower github-runner storage
+      run: |
+        # Remove software and language runtimes we're not using
+        sudo rm -rf \
+          "$AGENT_TOOLSDIRECTORY" \
+          /opt/google/chrome \
+          /opt/microsoft/msedge \
+          /opt/microsoft/powershell \
+          /opt/pipx \
+          /usr/lib/mono \
+          /usr/local/julia* \
+          /usr/local/lib/android \
+          /usr/local/lib/node_modules \
+          /usr/local/share/chromium \
+          /usr/local/share/powershell \
+          /usr/share/dotnet \
+          /usr/share/swift \
+          /opt/ghc \
+          /usr/local/share/boost
+        df -h /
+    - 
+      name: Clean up tools
+      uses: jlumbroso/free-disk-space@main
+      with:
+            # this might remove tools that are actually needed,
+            # if set to "true" but frees about 6 GB
+            tool-cache: true
+            
+            # all of these default to true, but feel free to set to
+            # "false" if necessary for your workflow
+            android: true
+            dotnet: true
+            haskell: true
+            large-packages: true
+            docker-images: true
+            swap-storage: true
+            
+    - 
+      name: Prune docker images (https://github.com/jens-maus/RaspberryMatic/blob/d5044bef3307bc61166377c162569de1a61cf332/.github/workflows/ci.yml#L34-L40)
+      run: |
+            sudo swapoff -a
+            sudo rm -f /swapfile
+            sudo apt clean
+            # docker rmi $(docker image ls -aq)
+            docker image prune -a
+            df -h
+
     - name: Checkout repository
       uses: actions/checkout@v4
 
@@ -18,9 +67,6 @@ jobs:
       run: |
         docker pull nasanccs/satvision-pix4d:latest
 
-    - name: Run tests inside Docker
+    - name: Run Python version inside Docker
       run: |
-        docker run --rm \
-          -v ${{ github.workspace }}:/workspace \
-          nasanccs/satvision-pix4d:latest \
-          bash -c "cd /workspace && pytest"
+        docker run --rm nasanccs/satvision-pix4d:latest python --version
