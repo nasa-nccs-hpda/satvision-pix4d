@@ -78,7 +78,6 @@ RUN git clone --single-branch --branch master https://github.com/pkolano/shift.g
 # Pip
 RUN pip --no-cache-dir install --ignore-installed blinker \
     pytorch-lightning \
-    'numpy<2' \
     Lightning \
     transformers \
     datasets \
