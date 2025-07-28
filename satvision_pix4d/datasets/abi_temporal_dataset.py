@@ -48,6 +48,7 @@ class ABITemporalDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx):
+
         path = self.files[idx]
 
         # Load dataset
@@ -64,10 +65,10 @@ class ABITemporalDataset(Dataset):
 
         # Extract timestamps: (time, band)
         t = ds["t"].values
-        t_per_time = t[:, 0]  # use first band timestamp per time
+        # t_per_time = t[:, 0]  # use first band timestamp per time
 
         # Vectorized datetime parsing
-        pd_timestamps = pd.to_datetime(t_per_time)
+        pd_timestamps = pd.to_datetime(t)#_per_time)
 
         emb_map = {
             "year": pd_timestamps.year - self.min_year,
