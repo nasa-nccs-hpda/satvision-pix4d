@@ -55,7 +55,7 @@ class ABITemporalDataset(Dataset):
         ds = xr.open_zarr(path)
 
         # Get Rad: (time, band, y, x)
-        rad = ds["Rad"].values.astype(np.float32)
+        rad = ds["__xarray_dataarray_variable__"].values.astype(np.float32)
         rad = rad[:, :self.in_chans, :, :]
         rad = np.nan_to_num(rad, nan=0.0)
         # print(idx, np.isnan(rad).any())
