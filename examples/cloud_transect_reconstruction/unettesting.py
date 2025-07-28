@@ -9,31 +9,19 @@ import matplotlib.pyplot as plt
 import random
 
 datapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 IMG_HEIGHT = 128
 IMG_WIDTH = 128
 IMG_CHANNELS = 16
-LEARNING_RATE = 1e-4
-EPOCHS = 100
+LEARNING_RATE = 0.001
+EPOCHS = 1000
 DATALOADER_WORKERS = 10
-
-#channel_mins = torch.tensor([26.8503,  0.1685, -8.2685, -1.4102, -1.1436, -0.1486,  0.0375,  0.2940,
-#         0.7091,  1.0280,  2.7341, 10.9818,  7.9130, 10.6544, 14.0237, 17.8245])
-#channel_maxs = torch.tensor([ 804.0361, 4095.0000,  373.1670,   79.2232,   94.8480,   29.7895,
-#          19.2759,    7.1074,   17.2302,   27.8833,  103.7081,   78.4874,
-#         159.9617,  175.4634,  178.8900,  132.4386])
 
 channel_mins = torch.tensor([26.8503,  0.1685, -8.2685, -1.4102, -1.1436, -0.1486,  0.0375,  0.2940,
          0.7091,  1.0280,  2.7341, 10.9818,  7.9130, 10.6544, 14.0237, 17.8245])
-channel_maxs = torch.tensor([373.6197, 313.2299, 199.4103,   3.8946,  30.4704,   6.4709,   0.8165,
-          3.5764,   9.9501,  15.6381,  45.9991,  37.7118,  80.0275,  92.6629,
-        100.9954,  85.6070])
-
-# channel_mins = torch.tensor([0, 0, 0, 0, 0, 0,  0.0375,  0.2940,
-#          0.7091,  1.0280,  2.7341, 10.9818,  7.9130, 10.6544, 14.0237, 17.8245])
-# channel_maxs = torch.tensor([ 804.0361, 600,  373.1670,   79.2232,   94.8480,   29.7895,
-#           3,    7.1074,   17.2302,   27.8833,  103.7081,   78.4874,
-#          159.9617,  175.4634,  178.8900,  132.4386])
+channel_maxs = torch.tensor([ 804.0361, 4095.0000,  373.1670,   79.2232,   94.8480,   29.7895,
+          19.2759,    7.1074,   17.2302,   27.8833,  103.7081,   78.4874,
+         159.9617,  175.4634,  178.8900,  132.4386])
 
 # ABI Chip Loader
 class AbiChipDataset(Dataset):
@@ -78,11 +66,10 @@ class AbiDataModule(pl.LightningDataModule):
 if __name__ == '__main__':
     pl.seed_everything(27, workers=True)
 
-    unet = LightningUNET(in_channels=IMG_CHANNELS, classes=1, learning_rate=LEARNING_RATE)
-    # net = LightningUNET.load_from_checkpoint("/explore/nobackup/projects/pix4dcloud/szhang16/checkpoints/40epochs1900chips.ckpt", in_channels=IMG_CHANNELS, classes=1)
+    unet = LightningUNET.load_from_checkpoint("/explore/nobackup/projects/pix4dcloud/szhang16/checkpoints/lightning_logs/version_39084251/checkpoints/epoch=25-step=3900.ckpt", in_channels=IMG_CHANNELS, classes=1)
 
     lr_scheduler = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
-    early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", mode="min", patience=10)
+    early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", mode="min")
 
     datamodule = AbiDataModule(datapath, BATCH_SIZE)
 
@@ -94,8 +81,4 @@ if __name__ == '__main__':
         callbacks=[lr_scheduler, early_stopping]
     )
 
-    trainer.fit(model=unet, datamodule=datamodule)
-
     trainer.test(model=unet, datamodule=datamodule)
-
-    trainer.save_checkpoint("/explore/nobackup/people/szhang16/checkpoints/july22newminmax.ckpt")

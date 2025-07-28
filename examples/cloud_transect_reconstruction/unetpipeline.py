@@ -1,9 +1,95 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms.functional as TF
+import lightning as pl
+from lightning.pytorch.callbacks import ModelCheckpoint
+from huggingface_hub import snapshot_download
+from torch.utils.data import Dataset, DataLoader
+import glob
+import numpy as np
+
+import torchvision.transforms as T
+
 from torchmetrics import JaccardIndex
-import pytorch_lightning as pl
+import torchvision.transforms.functional as TF
+
+from transforms import MinMaxEmissiveScaleReflectance, ConvertABIToReflectanceBT
+
+datapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
+
+BATCH_SIZE = 32
+IMG_HEIGHT = 128
+IMG_WIDTH = 128
+IMG_CHANNELS = 14
+LEARNING_RATE = 1e-4
+EPOCHS = 100
+DATALOADER_WORKERS = 10
+
+translation = [1, 2, 0, 4, 5, 6, 3, 8, 9, 10, 11, 13, 14, 15]
+
+class AbiToaTransform:
+    """
+    torchvision transform which transforms the input imagery into
+    addition to generating a MiM mask
+    """
+
+    def __init__(self, img_size):
+
+        self.transform_img = \
+            T.Compose([
+                T.Lambda(lambda img: img[:, :, translation]),
+                ConvertABIToReflectanceBT(),
+                MinMaxEmissiveScaleReflectance(),
+                T.ToTensor(),
+                T.Resize((img_size, img_size), antialias=True),
+            ])
+
+    def __call__(self, img):
+
+        img = self.transform_img(img)
+
+        return img
+
+# ABI Chip Loader
+class AbiChipDataset(Dataset):
+    def __init__(self, chip_paths):
+        self.chip_paths = chip_paths
+        self.transform = AbiToaTransform(img_size=IMG_HEIGHT)
+
+    def __len__(self):
+        return len(self.chip_paths)
+
+    def __getitem__(self, idx):
+        chip = np.load(self.chip_paths[idx], allow_pickle=True)
+        image = chip['chip'] 
+        if self.transform is not None:
+            image = self.transform(image)
+        mask = torch.from_numpy(chip['data'].item()['Cloud_mask_binary']).unsqueeze(0).float()
+
+        return (image, mask)
+
+class AbiDataModule(pl.LightningDataModule):
+    def __init__(self, chip_dir = datapath, batch_size = BATCH_SIZE):
+        super().__init__()
+        self.chip_dir = chip_dir
+        self.batch_size = batch_size
+
+    def setup(self, stage):
+        total_chips = glob.glob(self.chip_dir + "*.npz")
+        train_idx = int(len(total_chips) * 0.2)
+        val_idx = int(len(total_chips) * 0.9)
+        self.train_dataset = AbiChipDataset(total_chips[:train_idx])
+        self.val_dataset = AbiChipDataset(total_chips[train_idx:val_idx])
+        self.test_dataset = AbiChipDataset(total_chips[val_idx:])
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size = self.batch_size, num_workers=DATALOADER_WORKERS)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size = self.batch_size, num_workers=DATALOADER_WORKERS)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size = self.batch_size, num_workers=DATALOADER_WORKERS)
 
 class UNET(nn.Module):
     def __init__(self, in_channels=16, decoder_classes=64, num_classes = 1, head_dropout = 0.2, output_shape=(91, 40)):
@@ -113,7 +199,7 @@ class LightningUNET(pl.LightningModule):
         dice = self.dice_loss(logits, targets)
         loss = self.dice_weight * dice + (1 - self.dice_weight) * ce
  
-        self.log("train_loss", loss, sync_dist=True)
+        self.log("train_loss", loss, sync_dist=True, on_step=True, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -124,9 +210,9 @@ class LightningUNET(pl.LightningModule):
         dice = self.dice_loss(logits, targets)
         loss = self.dice_weight * dice + (1 - self.dice_weight) * ce
  
-        self.log("val_loss", loss, sync_dist=True)
+        self.log("val_loss", loss, sync_dist=True, on_step=True, on_epoch=True)
         iou = self.iou(torch.sigmoid(logits) > 0.5, targets)
-        self.log("val_iou", iou, sync_dist=True)
+        self.log("val_iou", iou, sync_dist=True, on_step=True, on_epoch=True)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -139,3 +225,23 @@ class LightningUNET(pl.LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+if __name__ == '__main__':
+    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE)
+    datamodule.setup(stage=None)
+
+    model = LightningUNET(in_channels=IMG_CHANNELS, classes=1, learning_rate=LEARNING_RATE)
+
+    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE)
+
+    checkpoint_callback = ModelCheckpoint(dirpath="/explore/nobackup/projects/pix4dcloud/szhang16/checkpoints/unetquarter", save_top_k=1, every_n_epochs=5)
+
+    trainer = pl.Trainer(
+        max_epochs=EPOCHS,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        callbacks=[checkpoint_callback]
+    )
+    trainer.fit(model=model, datamodule=datamodule)
+
+    trainer.test(model=model, datamodule=datamodule)
