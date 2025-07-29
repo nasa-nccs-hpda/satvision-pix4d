@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sat-$1
+#SBATCH --job-name=satvision-training
 #SBATCH --time=72:00:00
 
 #SBATCH --nodes=1

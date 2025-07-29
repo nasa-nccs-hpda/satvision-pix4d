@@ -1,7 +1,7 @@
 import os
 import sys
 import torch
-import lightning as pl
+import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -24,9 +24,6 @@ datapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
 if __name__ == '__main__':
     checkpointpath = '/explore/nobackup/people/szhang16/checkpoints/' + MODEL_NAME
 
-    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE, training_split=TRAINING_SPLIT, num_workers=DATALOADER_WORKERS)
-    datamodule.setup(stage=None)
-
     if MODEL_NAME.startswith("sat"):
         model = LightningModel(model_name="SatVisionUNet", in_channels=IMG_CHANNELS, num_classes=1, lr=LEARNING_RATE, freeze_encoder=True, final_size=(91, 40))
     elif MODEL_NAME.startswith("unet"):
@@ -34,13 +31,13 @@ if __name__ == '__main__':
     else:
         raise ValueError(f"Unknown model name: {MODEL_NAME}")
 
-    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE)
+    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE, num_workers=DATALOADER_WORKERS)
     checkpoint_callback = ModelCheckpoint(dirpath=checkpointpath, save_top_k=-1, every_n_epochs=2)
     best_checkpoint_callback = ModelCheckpoint(dirpath=checkpointpath, save_top_k=1, monitor="val_loss", mode="min", filename="best-{epoch:02d}-{val_loss:.2f}")
 
     logger = TensorBoardLogger("/explore/nobackup/people/szhang16/checkpoints", name=MODEL_NAME)
 
-    trainer = pl.Trainer(
+    trainer = L.Trainer(
         max_epochs=EPOCHS,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=1,

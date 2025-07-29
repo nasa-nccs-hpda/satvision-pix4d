@@ -210,10 +210,15 @@ class LightningModel(L.LightningModule):
         dice = self.dice_loss(logits, masks)
         loss = self.dice_weight * dice + (1 - self.dice_weight) * ce
         self.log(f'{stage}_loss', loss, prog_bar=True, on_epoch=True)
+        output = {
+            "loss": loss,
+        }
         if stage == 'val' or stage == 'test':
             iou = self.iou(logits.sigmoid() > 0.5, masks)
             self.log(f'{stage}_iou', iou, prog_bar=True, on_epoch=True)
-        return loss
+            if stage == 'test':
+                output["iou"] = iou
+        return output
 
     def training_step(self, b, i): return self._common_step(b, 'train')
     def validation_step(self, b, i): return self._common_step(b, 'val')
