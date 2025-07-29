@@ -6,7 +6,8 @@
 #SBATCH --gpus=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=64gb
-module load anaconda
-conda activate torch
+#SBATCH --partition=grace
+module load miniforge
+conda activate 3dclouddownstream
 
-srun python3 unetpipeline.py $1 $2
+srun python3 3dcloudpipeline.py $1 $2
