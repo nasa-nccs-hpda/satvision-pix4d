@@ -19,8 +19,8 @@ class MinMaxEmissiveScaleReflectance(object):
             dtype=np.float32)
 
         self.emissive_maxs = np.array(
-            [221.07022, 224.44113, 242.3326, 307.42004,
-             290.8879, 343.72617, 345.72894, 323.5239],
+            [228.68851, 224.83987, 242.3326, 307.42004,
+             290.8879, 344.21173, 345.72894, 323.5239],
             dtype=np.float32)
 
     def __call__(self, img):
