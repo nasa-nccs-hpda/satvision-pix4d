@@ -31,8 +31,8 @@ if __name__ == '__main__':
     else:
         raise ValueError(f"Unknown model name: {MODEL_NAME}")
 
-    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE, num_workers=DATALOADER_WORKERS)
-    checkpoint_callback = ModelCheckpoint(dirpath=checkpointpath, save_top_k=-1, every_n_epochs=2)
+    datamodule = AbiDataModule(chip_dir=datapath, batch_size=BATCH_SIZE, num_workers=DATALOADER_WORKERS, training_split=TRAINING_SPLIT)
+    checkpoint_callback = ModelCheckpoint(dirpath=checkpointpath, save_top_k=-1, every_n_epochs=3)
     best_checkpoint_callback = ModelCheckpoint(dirpath=checkpointpath, save_top_k=1, monitor="val_loss", mode="min", filename="best-{epoch:02d}-{val_loss:.2f}")
 
     logger = TensorBoardLogger("/explore/nobackup/people/szhang16/checkpoints", name=MODEL_NAME)
@@ -48,4 +48,7 @@ if __name__ == '__main__':
 
     trainer.fit(model=model, datamodule=datamodule)
 
+    best_model_path = best_checkpoint_callback.best_model_path
+    print(f"Testing best model: {best_model_path}")
+    model = LightningModel.load_from_checkpoint(best_model_path, model_name=MODEL_NAME, in_channels=IMG_CHANNELS, num_classes=1, lr=LEARNING_RATE)
     trainer.test(model=model, datamodule=datamodule)
