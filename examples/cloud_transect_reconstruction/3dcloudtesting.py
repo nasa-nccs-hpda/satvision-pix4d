@@ -19,7 +19,6 @@ MODEL_NAME = sys.argv[1] if len(sys.argv) > 1 else None
 DATALOADER_WORKERS = 71
 
 MODEL_NAMES = ["satfull", "sathalf", "satquarter", "sateighth", "unetfull", "unethalf", "unetquarter", "uneteighth"]
-#MODEL_NAMES = ["unetfull"]
 
 datapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
 
