@@ -8,7 +8,7 @@ import xarray as xr
 import pandas as pd
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
-
+from satvision_pix4d.transforms.min_max import PerTileMinMaxNormalize
 
 class ABITemporalDataset(Dataset):
     """
@@ -27,7 +27,10 @@ class ABITemporalDataset(Dataset):
         self.min_year = 2000
         self.img_size = img_size
         self.in_chans = in_chans
-        self.transform = transform
+        
+        # self.transform = transform
+        self.transform = PerTileMinMaxNormalize()
+        # /home/jacaraba/satvision-pix4d/satvision_pix4d/transforms/min_max.py
 
         if temporal_embeddings is None:
             self.temporal_embeddings = ["year", "month", "hour"]
