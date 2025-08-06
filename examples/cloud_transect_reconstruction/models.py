@@ -1,3 +1,6 @@
+import sys
+
+sys.path.append('/explore/nobackup/people/jacaraba/development/satvision-toa')
 from satvision_toa.models.mim import build_mim_model
 from satvision_toa.utils import load_config
 import torch
@@ -6,9 +9,6 @@ import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from torchmetrics import JaccardIndex
 import lightning as L
-import sys
-
-sys.path.append('/explore/nobackup/people/jacaraba/development/satvision-toa')
 
 
 class DiceLoss(nn.Module):

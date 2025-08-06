@@ -1,11 +1,8 @@
 """
 3D Cloud Pipeline for Training Models
 Run with python3 3dcloudpipeline.py <model_name> <training_split>
-e.g. python3 3dcloudpipeline.py satfull 0.8
+e.g. python3 3dcloudpipeline.py satfull
 model_name must begin with "sat" or "unet" to use SatVision or UNet models respectively
-
-training_split is a float between 0 and 0.8 indicating the fraction of data to use for training
-the last 20% of the data will be used for validation and testing
 
 All other configurable parameters are set in the code below
 """
@@ -36,7 +33,7 @@ SAVE_EVERY_N_EPOCHS = 5
 DATALOADER_WORKERS = 71
 
 traindatapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
-TRAINING_SPLIT = (0, float(sys.argv[2]) if len(sys.argv) > 2 else 0.8)
+TRAINING_SPLIT = (0, 0.8)
 valdatapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
 VAL_SPLIT = (0.8, 0.9)
 testdatapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
