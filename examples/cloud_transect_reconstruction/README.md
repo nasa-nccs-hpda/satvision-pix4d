@@ -3,7 +3,7 @@
 ## 3dcloudpipeline.py
 This script is for training the models
 
-## Usage
+### Usage
 Load the environment
 ```bash
 ssh gpulogin1 # connect to Prism
@@ -49,6 +49,14 @@ In order to see model results with tensorboard while the model is training, simp
 tensorboard --logdir <checkpoint_path>
 ```
 Metrics will also be saved in a csv file in the checkpoints folder.
+
+## 3dcloudtesting.py
+### Usage
+Run with `python3 3dcloudtesting.py`
+
+### Configuration
+All the configurable parameters are in the file
+Change `MODEL_NAMES` to be the list of models you want to test
 
 ## models.py
 Contains all the code for the SatVision and UNet model
