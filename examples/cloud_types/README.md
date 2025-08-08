@@ -2,7 +2,7 @@
 
 Everything found in this GitHub folder can also be found at /explore/nobackup/projects/pix4dcloud/sjaddu.
 
-* `BESTUNET.ckpt`: A model checkpoint file containing the saved weights of the best-performing U-Net model.
+* `BESTUNET.ckpt`: A model checkpoint file containing the saved weights of the best-performing U-Net model (not in GitHub).
 * `bins+statistics.ipynb`: A Jupyter Notebook for analyzing and visualizing statistics, specifically counting and showing the number of pixels of each class type of all the cloud vertical structure masks in a given directory.
 * `confusion_matrix.ipynb`: A Jupyter Notebook used to generate and display the confusion matrix.
 * `png_visualization.ipynb`: A Jupyter Notebook for showing PNGs.
