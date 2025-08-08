@@ -1,13 +1,13 @@
 ## Directory Contents
 
-This directory contains the scripts, notebooks, model weights, and results associated with this project.
+Everything found in this GitHub folder can also be found at /explore/nobackup/projects/pix4dcloud/sjaddu.
 
-* `BESTUNET.ckpt`: A model checkpoint file containing the saved weights of our best-performing U-Net model.
-* `dino-statistics.ipynb`: A Jupyter Notebook for analyzing and visualizing statistics, potentially related to the DINO self-supervised learning framework.
-* `confusion_matrix.ipynb`: A Jupyter Notebook used to generate and display the confusion matrix for evaluating model performance on the test set.
-* `png_visualization.ipynb`: A Jupyter Notebook for creating PNG visualizations of model predictions, heatmaps, or other results.
-* `slurm-BESTUNET.out`: The standard output file from a Slurm job, containing logs from a training or inference run of the `BESTUNET` model on a high-performance computing (HPC) cluster.
-* `test_images/`: A directory containing the image dataset used for testing and evaluating the model's performance.
-* `unet-satvision_training_pipeline-inference.py`: A Python script that defines the complete pipeline for training the U-Net model on satellite imagery and running inference with it.
-* `u_net_training_pipeline-inference.py`: A Python script implementing the general training and inference pipeline for the U-Net model.
+* `BESTUNET.ckpt`: A model checkpoint file containing the saved weights of the best-performing U-Net model.
+* `bins+statistics.ipynb`: A Jupyter Notebook for analyzing and visualizing statistics, specifically counting and showing the number of pixels of each class type of all the cloud vertical structure masks in a given directory.
+* `confusion_matrix.ipynb`: A Jupyter Notebook used to generate and display the confusion matrix.
+* `png_visualization.ipynb`: A Jupyter Notebook for showing PNGs.
+* `slurm-BESTUNET.out`: The Slurm output file of the best U-Net model I trained, includes the confusion matrix and mIoU/per-class IoUs.
+* `test_images/`: A directory containing sample reconstructions or inference masks of the model. They are all PNGs.
+* `unet-satvision_training_pipeline-inference.py`: A Python script that defines the complete pipeline for training and inference of the U-Net model with the SatVision encoder.
+* `u_net_training_pipeline-inference.py`: A Python script implementing the training and inference pipeline for the normal U-Net model.
 
