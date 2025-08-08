@@ -1,7 +1,5 @@
 """
 3D Cloud Pipeline for Testing Models
-
-NEEDS TO BE REFACTORED
 """
 
 import sys
@@ -92,7 +90,7 @@ if __name__ == '__main__':
             max_epochs=EPOCHS,
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
-            callbacks=[],
+            callbacks=[savecallback],
             enable_checkpointing=False,
             default_root_dir=checkpointpath,
         )
