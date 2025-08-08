@@ -13,80 +13,95 @@ from geopy.distance import geodesic
 import sys
 # from satpy import Scene
 
-## ===============================================
-def read_2b_cldclass_lidar(cs_file,latbin=None):
-## ===============================================
-  f_2b_cldclass_lidar=SD(cs_file, SDC.READ)
-  sds_obj = f_2b_cldclass_lidar.select('CloudLayerBase')
-  cs_clb = sds_obj.get()
-  sds_obj = f_2b_cldclass_lidar.select('CloudLayerTop')
-  cs_clt = sds_obj.get()
-  sds_obj = f_2b_cldclass_lidar.select('CloudLayerType')
-  cs_cltype = sds_obj.get()
+'''
+CONFIGURATION PARAMETERS
+'''
 
-  sdc_2bcldclass_lidar=HDF(cs_file, SDC.READ)
-  vs_2bcldclass_lidar=sdc_2bcldclass_lidar.vstart()
-  cs_QC = np.squeeze(vs_2bcldclass_lidar.attach('Data_quality')[:])
-  Latitude = np.squeeze(vs_2bcldclass_lidar.attach('Latitude')[:])
-  Longitude = np.squeeze(vs_2bcldclass_lidar.attach('Longitude')[:])
+LATLONDATA = "/explore/nobackup/projects/pix4dcloud/jgong/ABI_EAST_GEO_TOPO_LOMSK.nc"
+CLOUDSATPATH = '/explore/nobackup/projects/pix4dcloud/szhang16/cloudsat/'
+ROOT_DIR = '/explore/nobackup/projects/pix4dcloud/szhang16/cloudsat/2B-CLDCLASS-LIDAR'
+ABIDATA = "/css/geostationary/BackStage/GOES-16-ABI-L1B-FULLD/"
+SAVEDIR = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16-Redone/'
 
-  ilat = np.squeeze(np.argwhere((Latitude >= latbin[0]) & (Latitude <= latbin[1])))
-  cs_clb = cs_clb[ilat,:]
-  cs_clt = cs_clt[ilat,:]
-  cs_QC = cs_QC[ilat]
-  cs_cltype = cs_cltype[ilat,:]
-  Latitude = Latitude[ilat]
-  Longitude = Longitude[ilat]
-
-  return(cs_clb,cs_clt,cs_cltype,cs_QC,Latitude,Longitude)
-
-## ===============================================
-def read_cs_ecmwf(aux_file,latbin=None):
-## ===============================================
-  f_ecmwf=SD(aux_file, SDC.READ)
-  sds_obj=f_ecmwf.select('Pressure')
-  Pressure =sds_obj.get()
-  sds_obj=f_ecmwf.select('Temperature')
-  Temperature =sds_obj.get()
-  sds_obj=f_ecmwf.select('Specific_humidity')
-  Specific_humidity =sds_obj.get()
-  #sds_obj=f_ecmwf.select('U_velocity')
-  #U_velocity =sds_obj.get()
-  #sds_obj=f_ecmwf.select('V_velocity')
-  #V_velocity =sds_obj.get()
-
-  sdc_ecmwf=HDF(aux_file, SDC.READ)
-  vs_ecmwf=sdc_ecmwf.vstart()
-  EC_height = np.squeeze(vs_ecmwf.attach('EC_height')[:])
-  Profile_time = np.squeeze(vs_ecmwf.attach('Profile_time')[:])
-  UTC_start = np.squeeze(vs_ecmwf.attach('UTC_start')[:])
-  #TAI_start = np.squeeze(vs_ecmwf.attach('TAI_start')[:])
-  Latitude = np.squeeze(vs_ecmwf.attach('Latitude')[:])
-  Longitude = np.squeeze(vs_ecmwf.attach('Longitude')[:])
-  DEM_elevation = np.squeeze(vs_ecmwf.attach('DEM_elevation')[:])
-  Skin_temperature = np.squeeze(vs_ecmwf.attach('Skin_temperature')[:])
-  Surface_pressure = np.squeeze(vs_ecmwf.attach('Surface_pressure')[:])
-  Temperature_2m = np.squeeze(vs_ecmwf.attach('Temperature_2m')[:])
-  #Sea_surface_temperature = np.squeeze(vs_ecmwf.attach('Sea_surface_temperature')[:])
-  U10_velocity = np.squeeze(vs_ecmwf.attach('U10_velocity')[:])
-  V10_velocity = np.squeeze(vs_ecmwf.attach('V10_velocity')[:])
+# ===============================================
 
 
-  UTC_Time = UTC_start + Profile_time
-  UTC_Time = UTC_Time/60./60.
-  ilat = np.squeeze(np.argwhere((Latitude >= latbin[0]) & (Latitude <= latbin[1])))
-  Pressure = Pressure[ilat,:]
-  Temperature = Temperature[ilat,:]
-  Specific_humidity = Specific_humidity[ilat,:]
-  DEM_elevation = DEM_elevation[ilat]
-  Skin_temperature = Skin_temperature[ilat]
-  Temperature_2m = Temperature_2m[ilat]
-  U10_velocity = U10_velocity[ilat]
-  V10_velocity = V10_velocity[ilat]
-  UTC_Time = UTC_Time[ilat]
+def read_2b_cldclass_lidar(cs_file, latbin=None):
+    # ===============================================
+    f_2b_cldclass_lidar = SD(cs_file, SDC.READ)
+    sds_obj = f_2b_cldclass_lidar.select('CloudLayerBase')
+    cs_clb = sds_obj.get()
+    sds_obj = f_2b_cldclass_lidar.select('CloudLayerTop')
+    cs_clt = sds_obj.get()
+    sds_obj = f_2b_cldclass_lidar.select('CloudLayerType')
+    cs_cltype = sds_obj.get()
+
+    sdc_2bcldclass_lidar = HDF(cs_file, SDC.READ)
+    vs_2bcldclass_lidar = sdc_2bcldclass_lidar.vstart()
+    cs_QC = np.squeeze(vs_2bcldclass_lidar.attach('Data_quality')[:])
+    Latitude = np.squeeze(vs_2bcldclass_lidar.attach('Latitude')[:])
+    Longitude = np.squeeze(vs_2bcldclass_lidar.attach('Longitude')[:])
+
+    ilat = np.squeeze(np.argwhere(
+        (Latitude >= latbin[0]) & (Latitude <= latbin[1])))
+    cs_clb = cs_clb[ilat, :]
+    cs_clt = cs_clt[ilat, :]
+    cs_QC = cs_QC[ilat]
+    cs_cltype = cs_cltype[ilat, :]
+    Latitude = Latitude[ilat]
+    Longitude = Longitude[ilat]
+
+    return (cs_clb, cs_clt, cs_cltype, cs_QC, Latitude, Longitude)
+
+# ===============================================
 
 
-  return(Pressure,DEM_elevation,Temperature,Specific_humidity,EC_height,Temperature_2m,U10_velocity,V10_velocity,UTC_Time)
+def read_cs_ecmwf(aux_file, latbin=None):
+    # ===============================================
+    f_ecmwf = SD(aux_file, SDC.READ)
+    sds_obj = f_ecmwf.select('Pressure')
+    Pressure = sds_obj.get()
+    sds_obj = f_ecmwf.select('Temperature')
+    Temperature = sds_obj.get()
+    sds_obj = f_ecmwf.select('Specific_humidity')
+    Specific_humidity = sds_obj.get()
+    # sds_obj=f_ecmwf.select('U_velocity')
+    # U_velocity =sds_obj.get()
+    # sds_obj=f_ecmwf.select('V_velocity')
+    # V_velocity =sds_obj.get()
+
+    sdc_ecmwf = HDF(aux_file, SDC.READ)
+    vs_ecmwf = sdc_ecmwf.vstart()
+    EC_height = np.squeeze(vs_ecmwf.attach('EC_height')[:])
+    Profile_time = np.squeeze(vs_ecmwf.attach('Profile_time')[:])
+    UTC_start = np.squeeze(vs_ecmwf.attach('UTC_start')[:])
+    # TAI_start = np.squeeze(vs_ecmwf.attach('TAI_start')[:])
+    Latitude = np.squeeze(vs_ecmwf.attach('Latitude')[:])
+    Longitude = np.squeeze(vs_ecmwf.attach('Longitude')[:])
+    DEM_elevation = np.squeeze(vs_ecmwf.attach('DEM_elevation')[:])
+    Skin_temperature = np.squeeze(vs_ecmwf.attach('Skin_temperature')[:])
+    Surface_pressure = np.squeeze(vs_ecmwf.attach('Surface_pressure')[:])
+    Temperature_2m = np.squeeze(vs_ecmwf.attach('Temperature_2m')[:])
+    # Sea_surface_temperature = np.squeeze(vs_ecmwf.attach('Sea_surface_temperature')[:])
+    U10_velocity = np.squeeze(vs_ecmwf.attach('U10_velocity')[:])
+    V10_velocity = np.squeeze(vs_ecmwf.attach('V10_velocity')[:])
+
+    UTC_Time = UTC_start + Profile_time
+    UTC_Time = UTC_Time/60./60.
+    ilat = np.squeeze(np.argwhere(
+        (Latitude >= latbin[0]) & (Latitude <= latbin[1])))
+    Pressure = Pressure[ilat, :]
+    Temperature = Temperature[ilat, :]
+    Specific_humidity = Specific_humidity[ilat, :]
+    DEM_elevation = DEM_elevation[ilat]
+    Skin_temperature = Skin_temperature[ilat]
+    Temperature_2m = Temperature_2m[ilat]
+    U10_velocity = U10_velocity[ilat]
+    V10_velocity = V10_velocity[ilat]
+    UTC_Time = UTC_Time[ilat]
+
+    return (Pressure, DEM_elevation, Temperature, Specific_humidity, EC_height, Temperature_2m, U10_velocity, V10_velocity, UTC_Time)
+
 
 def find_files(directory, prefix):
     matching_files = []
@@ -94,6 +109,7 @@ def find_files(directory, prefix):
         if filename.startswith(prefix):
             matching_files.append(os.path.join(directory, filename))
     return matching_files
+
 
 def gather_files(YYYY, DDD, HH, ROOT):
     ABI_ = {
@@ -137,6 +153,7 @@ def gather_files(YYYY, DDD, HH, ROOT):
 
     return ABI_
 
+
 def get_L1B_L2(abipaths, l2path, YYYY, DDD, HH, ROOT):
 
     if len(abipaths) != 16:
@@ -145,7 +162,8 @@ def get_L1B_L2(abipaths, l2path, YYYY, DDD, HH, ROOT):
     CHANNELS = []
 
     for file in abipaths:
-        L1B = np.asarray(nc.Dataset(ROOT + YYYY + "/" + DDD + "/" + HH + "/" + file, 'r')["Rad"])
+        L1B = np.asarray(nc.Dataset(ROOT + YYYY + "/" + DDD +
+                         "/" + HH + "/" + file, 'r')["Rad"])
         CHANNEL = int(file[19:21])
         CHANNELS.append((L1B, CHANNEL))
 
@@ -168,11 +186,11 @@ def get_L1B_L2(abipaths, l2path, YYYY, DDD, HH, ROOT):
 
     return ABI
 
+
 BOUND_SIZE = 1600
 LENGTH = 10848
 
-#f = nc.Dataset("/explore/nobackup/projects/pix4dcloud/jgong/ABI_WEST_GEO_TOPO_LOMSK.nc")
-f = nc.Dataset("/explore/nobackup/projects/pix4dcloud/jgong/ABI_EAST_GEO_TOPO_LOMSK.nc")
+f = nc.Dataset(LATLONDATA)
 abiLong = np.array(f['Longitude'])
 abiLat = np.array(f['Latitude'])
 
@@ -195,18 +213,21 @@ longSlice = abiLong[5424, :]
 longSlice = longSlice[18:-18]
 latSlice = latSlice[::-1]
 
+
 def interpArray(Temperature, EC_height):
 
-    z_grid=np.arange(40)*0.5
+    z_grid = np.arange(40)*0.5
     N = Temperature.shape[0]
     Temperature_grid = np.zeros((N, len(z_grid)))
     for i in range(N):
-        Temperature_tmp=np.squeeze(Temperature[i,:])
-        ivalid=np.squeeze(np.where(Temperature_tmp > 0))
+        Temperature_tmp = np.squeeze(Temperature[i, :])
+        ivalid = np.squeeze(np.where(Temperature_tmp > 0))
 
-        Temperature_grid[i, :]=np.interp(z_grid,np.flip(EC_height[ivalid]/1000.),np.flip(Temperature_tmp[ivalid]))
+        Temperature_grid[i, :] = np.interp(z_grid, np.flip(
+            EC_height[ivalid]/1000.), np.flip(Temperature_tmp[ivalid]))
 
     return Temperature_grid
+
 
 def processTime(t, yy, ddn, lat, lon, ABI_ROOT):
     if np.floor(t) < 19:
@@ -223,7 +244,9 @@ def processTime(t, yy, ddn, lat, lon, ABI_ROOT):
     lati = len(latSlice) - np.searchsorted(latSlice, lat) + 17
     loni = np.searchsorted(longSlice, lon) + 18
 
-    distances = np.abs(abiLat[lati-AREA_SIZE:lati+AREA_SIZE, loni-AREA_SIZE:loni+AREA_SIZE] - lat) + np.abs(abiLong[lati-AREA_SIZE:lati+AREA_SIZE, loni-AREA_SIZE:loni+AREA_SIZE] - lon)
+    distances = np.abs(abiLat[lati-AREA_SIZE:lati+AREA_SIZE, loni-AREA_SIZE:loni+AREA_SIZE] - lat) + \
+        np.abs(abiLong[lati-AREA_SIZE:lati+AREA_SIZE,
+               loni-AREA_SIZE:loni+AREA_SIZE] - lon)
     coords = np.array(np.unravel_index(distances.argmin(), distances.shape))
     if coords[0] == 0 or coords[1] == 0 or coords[1] == 2*AREA_SIZE-1 or coords[0] == 2*AREA_SIZE - 1:
         distances = np.abs(abiLat - lat) + np.abs(abiLong - lon)
@@ -262,33 +285,37 @@ def processTime(t, yy, ddn, lat, lon, ABI_ROOT):
 
     minutes = str(minutes)
     if minutes == "0":
-        minutes ="00"
+        minutes = "00"
 
     ABI = COLLECTED_ABI_DATA.get(f'{yy}-{ddn}-{hour}-{minutes}')
     if ABI is None:
-        ABI = get_L1B_L2(DATA[minutes], DATA["L200"], DATA["YYYY"], DATA["DDD"], DATA["HH"], ABI_ROOT)
+        ABI = get_L1B_L2(DATA[minutes], DATA["L200"],
+                         DATA["YYYY"], DATA["DDD"], DATA["HH"], ABI_ROOT)
         COLLECTED_ABI_DATA[f'{yy}-{ddn}-{hour}-{minutes}'] = ABI
 
     chip = ABI[coords[0]-64:coords[0]+64, coords[1]-64:coords[1]+64, :]
 
     return chip, coords
 
+
 translation = [1, 2, 0, 4, 5, 6, 3, 8, 9, 10, 11, 13, 14, 15]
 
+
 def processFile(yy, ddn, orbit, latb):
-    cloudsatpath = '/explore/nobackup/projects/pix4dcloud/szhang16/cloudsat/'
-    #cloudsatpath = '/discover/nobackup/jgong/cloudsat/'
-    cs_file = glob.glob(cloudsatpath+'2B-CLDCLASS-LIDAR/'+yy+'/'+ddn+'/'+yy+ddn+'*'+orbit+'*2B-CLDCLASS-LIDAR*'+'P1_R05*.hdf')
-    aux_file = glob.glob(cloudsatpath+'ECMWF-AUX/'+yy+'/'+ddn+'/'+yy+ddn+'*'+orbit+'*ECMWF-AUX*'+'P1_R05*.hdf')
+    cs_file = glob.glob(CLOUDSATPATH+'2B-CLDCLASS-LIDAR/'+yy+'/' +
+                        ddn+'/'+yy+ddn+'*'+orbit+'*2B-CLDCLASS-LIDAR*'+'P1_R05*.hdf')
+    aux_file = glob.glob(CLOUDSATPATH+'ECMWF-AUX/'+yy+'/' +
+                         ddn+'/'+yy+ddn+'*'+orbit+'*ECMWF-AUX*'+'P1_R05*.hdf')
 
     if len(cs_file) == 0 or len(aux_file) == 0:
         return
 
-    [Pressure,DEM_elevation,Temperature,Specific_humidity,EC_height,Temperature_2m,\
-        U10_velocity,V10_velocity,UTC_Time] = read_cs_ecmwf(aux_file[0],latbin=latb)
+    [Pressure, DEM_elevation, Temperature, Specific_humidity, EC_height, Temperature_2m,
+        U10_velocity, V10_velocity, UTC_Time] = read_cs_ecmwf(aux_file[0], latbin=latb)
 
-    ##========== read 2b-cldclass-lidar ================================
-    [cs_clb,cs_clt,cs_cltype,cs_QC,Latitude,Longitude] = read_2b_cldclass_lidar(cs_file[0],latbin=latb)
+    # ========== read 2b-cldclass-lidar ================================
+    [cs_clb, cs_clt, cs_cltype, cs_QC, Latitude,
+        Longitude] = read_2b_cldclass_lidar(cs_file[0], latbin=latb)
     Longitude[Longitude < 0] += 360
 
     Pressure = interpArray(Pressure, EC_height)
@@ -319,7 +346,8 @@ def processFile(yy, ddn, orbit, latb):
 
     while i < N:
         try:
-            chip, coords = processTime(UTC_Time[i], yy, ddn, Latitude[i], Longitude[i], '/css/geostationary/BackStage/GOES-16-ABI-L1B-FULLD/')
+            chip, coords = processTime(
+                UTC_Time[i], yy, ddn, Latitude[i], Longitude[i], ABIDATA)
         except ValueError:
             i += 20
             continue
@@ -356,23 +384,24 @@ def processFile(yy, ddn, orbit, latb):
 
         # chip = chip[..., translation]
 
-        np.savez('/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16-Redone/' + fileName, chip=chip, data=aux_data)
+        np.savez(SAVEDIR +
+                 fileName, chip=chip, data=aux_data)
         print(fileName, UTC_Time[i])
         i += 45
 
-#=================================
+# =================================
 #    MAIN
-#=================================
+# =================================
 
-ROOT_DIR = '/explore/nobackup/projects/pix4dcloud/szhang16/cloudsat/2B-CLDCLASS-LIDAR'
 
-#for year in os.listdir(ROOT_DIR):
+# for year in os.listdir(ROOT_DIR):
 #    if year == "2018":
 #        continue
 year = 0
 dayskip = 0
 try:
     year = sys.argv[1]
+    dayskip = sys.argv[2]
 except:
     print("Pass in year as the argument")
 for day in os.listdir(ROOT_DIR + '/' + year):
