@@ -17,21 +17,28 @@ from models import LightningModel
 CONFIGURABLE PARAMATERS
 """
 
+# MODEL_NAMES = ["satfull", "sathalf", "satquarter", "sateighth", "unetfull", "unethalf", "unetquarter", "uneteighth"]
+MODEL_NAMES = ["unetfull", "satfull"]
+
 BATCH_SIZE = 32
 IMG_HEIGHT = 128
 IMG_WIDTH = 128
 IMG_CHANNELS = 14
 LEARNING_RATE = 1e-4
-TRAINING_SPLIT = float(sys.argv[2]) if len(sys.argv) > 2 else 0.8
 EPOCHS = 100
 MODEL_NAME = sys.argv[1] if len(sys.argv) > 1 else None
+SAVE_EVERY_N_EPOCHS = 5
 DATALOADER_WORKERS = 71
 
-# MODEL_NAMES = ["satfull", "sathalf", "satquarter", "sateighth", "unetfull", "unethalf", "unetquarter", "uneteighth"]
-MODEL_NAMES = ["satfull"]
+traindatapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
+TRAINING_SPLIT = (0, 0.8)
+valdatapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
+VAL_SPLIT = (0.8, 0.9)
+testdatapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
+TEST_SPLIT = (0.9, 1.0)
 
-datapath = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16/'
-
+checkpointpath = '/explore/nobackup/people/szhang16/checkpoints/'
+resultspath = '/explore/nobackup/projects/pix4dcloud/szhang16/test_results/'
 
 class SaveTestResultsCallback(L.Callback):
     def __init__(self, save_dir, model_name):
@@ -49,12 +56,21 @@ class SaveTestResultsCallback(L.Callback):
 
 
 if __name__ == '__main__':
+
     datamodule = AbiDataModule(
-        chip_dir=datapath, batch_size=1, num_workers=DATALOADER_WORKERS)
+        train_path=traindatapath,
+        val_path=valdatapath,
+        test_path=testdatapath,
+        train_split=TRAINING_SPLIT,
+        val_split=VAL_SPLIT,
+        test_split=TEST_SPLIT,
+        batch_size=BATCH_SIZE,
+        num_workers=DATALOADER_WORKERS
+    )
 
     for model_name in MODEL_NAMES:
         best_ckpt = glob.glob(
-            "/explore/nobackup/people/szhang16/checkpoints/" + model_name + "/best-*.ckpt")
+            checkpointpath + model_name + "/best-*.ckpt")
         if not best_ckpt:
             print(f"No checkpoint found for model {model_name}")
             continue
@@ -67,7 +83,7 @@ if __name__ == '__main__':
                 best_ckpt[0], model_name="UNet", in_channels=IMG_CHANNELS, num_classes=1, lr=LEARNING_RATE, freeze_encoder=False)
 
         savecallback = SaveTestResultsCallback(
-            save_dir="/explore/nobackup/projects/pix4dcloud/szhang16/test_results/", model_name=model_name)
+            save_dir=resultspath, model_name=model_name)
 
         trainer = L.Trainer(
             max_epochs=EPOCHS,
@@ -75,8 +91,7 @@ if __name__ == '__main__':
             devices=1,
             callbacks=[],
             enable_checkpointing=False,
-            default_root_dir="/explore/nobackup/people/szhang16/checkpoints",
+            default_root_dir=checkpointpath,
         )
 
-        # Loop through the test datasat pytorch datalaoder
         trainer.test(model=model, datamodule=datamodule)

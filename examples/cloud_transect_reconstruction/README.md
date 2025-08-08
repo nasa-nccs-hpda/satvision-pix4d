@@ -1,7 +1,7 @@
 # 3D Cloud Downstream Task
 
 ## 3dcloudpipeline.py
-This script is for training the models
+This script is for training the models.
 
 ### Usage
 Load the environment
@@ -29,18 +29,18 @@ python3 3dcloudpipeline.py satfull
 
 ### Configuration
 
-`SAVE_EVERY_N_EPOCHS` represents how often checkpoints will be saved (5 means 1 checkpoint per 5 epoch)
+`SAVE_EVERY_N_EPOCHS` represents how often checkpoints will be saved (5 means 1 checkpoint per 5 epoch).
 
 For loading datasets:
 `traindatapath` is the folder where all the training data is.
-`TRAINING_SPLIT` will be the percentages of the folder to use
+`TRAINING_SPLIT` will be the percentages of the folder to use.
 
 Example:
 `TRAINING_SPLIT = (0, 0.8)` means the first 80% of the data in `traindatapath` will be used as the training dataset.
 
 The same goes for the validation and testing datasets.
 
-`checkpointpath` is where all the checkpoints will be saved
+`checkpointpath` is where all the checkpoints will be saved.
 
 ### Logging
 
@@ -51,30 +51,29 @@ tensorboard --logdir <checkpoint_path>
 Metrics will also be saved in a csv file in the checkpoints folder.
 
 ## 3dcloudtesting.py
+
+Testing suite for the various models trained.
+
 ### Usage
 Run with `python3 3dcloudtesting.py`
 
 ### Configuration
-All the configurable parameters are in the file
-Change `MODEL_NAMES` to be the list of models you want to test
+All the configurable parameters are in the file. Change `MODEL_NAMES` to be the list of models you want to test.
 
 ## models.py
-Contains all the code for the SatVision and UNet model
-Any tweaks to model architecture should be done here
+Contains all the code for the SatVision and UNet model. Any tweaks to model architecture should be done here.
 
 ## transforms.py
-Contains all the transformations/unit conversions
-Any changes done to min-max scaling or unit conversion should be done here
+Contains all the transformations/unit conversions. Any changes done to min-max scaling or unit conversion should be done here.
 
 ## abidatamodule.py
-Contains all the code for data preprocessing/loading
-This, combined with `transforms.py`, will be the files changed if the data preprocessing is ever changed
+Contains all the code for data preprocessing/loading. This, combined with `transforms.py`, will be the files changed if the data preprocessing is ever changed.
 
 ## notebooks/
-Contains jupyter notebooks with some sample scripts such as SatVision-TOA reconstruction with ABI chips
+Contains jupyter notebooks with some sample scripts such as SatVision-TOA reconstruction with ABI chips.
 
 ## visualization/
-Contains jupyter notebooks with some visualizations such as boxplots and predictions
+Contains jupyter notebooks with some visualizations such as boxplots and predictions.
 
 # Data Paths on ADAPT
 
