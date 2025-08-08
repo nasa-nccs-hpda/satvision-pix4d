@@ -60,6 +60,10 @@ Run with `python3 3dcloudtesting.py`
 ### Configuration
 All the configurable parameters are in the file. Change `MODEL_NAMES` to be the list of models you want to test.
 
+`checkpoint_path` will need to be the directory where all the checkpoints are saved.
+
+The script will automatically find the best checkpoint (the one with best in the filename).
+
 ## models.py
 Contains all the code for the SatVision and UNet model. Any tweaks to model architecture should be done here.
 

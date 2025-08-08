@@ -20,7 +20,7 @@ CONFIGURABLE PARAMATERS
 # MODEL_NAMES = ["satfull", "sathalf", "satquarter", "sateighth", "unetfull", "unethalf", "unetquarter", "uneteighth"]
 MODEL_NAMES = ["unetfull", "satfull"]
 
-BATCH_SIZE = 32
+BATCH_SIZE = 1
 IMG_HEIGHT = 128
 IMG_WIDTH = 128
 IMG_CHANNELS = 14
@@ -84,6 +84,9 @@ if __name__ == '__main__':
 
         savecallback = SaveTestResultsCallback(
             save_dir=resultspath, model_name=model_name)
+
+        print(f"TESTING {model_name}")
+        print(f"USING CHECKPOINT {best_ckpt[0]}")
 
         trainer = L.Trainer(
             max_epochs=EPOCHS,
