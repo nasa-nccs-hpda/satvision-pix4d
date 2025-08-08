@@ -316,7 +316,7 @@ def visualize_prediction(chip_tensor, true_mask_padded, pred_mask_padded, file_p
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
-    #saving the figure a png to specified path
+    #saving the figure to a png to specified path
     base_filename = os.path.basename(file_path).replace('.npz', '.png')
     file_prefix = f"{dominant_class_name}_dominant_" if dominant_class_name else "random_"
     output_filename = f"{file_prefix}{base_filename}"
