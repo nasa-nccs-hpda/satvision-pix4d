@@ -105,24 +105,31 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
     def _avg_over_time(self, metric_fn, pred_raw, tgt_raw, pixel_mask=None):
         """
         Compute metric averaged over all timesteps T.
-        If pixel_mask is given, apply masked-only metric manually (PSNR via MSE).
+        If pixel_mask is provided and metric_fn is PSNR, compute a masked-only PSNR.
+        Otherwise, compute full-image metrics via TorchMetrics.
         """
         B, T, C, H, W = pred_raw.shape
 
-        # If we have to do masked-only PSNR/SSIM, we implement custom masked PSNR;
-        # SSIM with masks isn't directly supported; we skip masked SSIM unless full image.
-        if pixel_mask is not None and metric_fn is self.train_psnr or metric_fn is self.val_psnr:
-            psnr_vals = []
-            # scalar data_range
+        is_psnr = (metric_fn is self.train_psnr) or (metric_fn is self.val_psnr)
+        use_masked_psnr = (pixel_mask is not None) and is_psnr
+
+        if use_masked_psnr:
+            # masked-only PSNR via masked MSE
+            vals = []
             dr2 = self.metric_data_range ** 2
             for t in range(T):
-                # masked MSE over all channels
                 mask = pixel_mask  # (B,1,H,W)
                 num = mask.sum().clamp_min(1)
                 mse = (((pred_raw[:, t] - tgt_raw[:, t]) ** 2) * mask).sum() / num
                 psnr_t = 10.0 * torch.log10(dr2 / mse.clamp_min(1e-12))
-                psnr_vals.append(psnr_t)
-            return torch.stack(psnr_vals).mean()
+                vals.append(psnr_t)
+            return torch.stack(vals).mean()
+
+        # Fallback: full-image TorchMetrics (no mask)
+        vals = []
+        for t in range(T):
+            vals.append(metric_fn(pred_raw[:, t], tgt_raw[:, t]))
+        return torch.stack(vals).mean()
 
         # Otherwise, use TorchMetrics on full frame; average over T
         vals = []
