@@ -102,40 +102,61 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         """x: (B,T,C,H,W) in z-score → returns raw physical scale."""
         return x * self.ch_std + self.ch_mean
 
-    def _avg_over_time(self, metric_fn, pred_raw, tgt_raw, pixel_mask=None):
+    def _tokens_to_pixel_mask(self, mask_tokens, T, H, W):
         """
-        Compute metric averaged over all timesteps T.
-        If pixel_mask is provided and metric_fn is PSNR, compute a masked-only PSNR.
-        Otherwise, compute full-image metrics via TorchMetrics.
+        Convert patch-token mask (B, L=T*h*w) with 1=masked to per-time pixel mask (B,T,1,H,W),
+        WITHOUT using unpatchify. Robust and fast.
+        """
+        B, L = mask_tokens.shape
+        p = int(self.model.patch_embed.patch_size[0])
+        h, w = H // p, W // p
+        m = mask_tokens.view(B, T, h, w)                          # (B,T,h,w)
+        m = m.unsqueeze(2)                                        # (B,T,1,h,w)
+        m = m.repeat(1, 1, 1, p, 1, p).reshape(B, T, 1, H, W)     # (B,T,1,H,W)
+        return m.float()
+
+    def _merge_pred_with_visible(self, pred_tokens, gt_imgs):
+        """
+        Build full-frame reconstruction like MAE papers do:
+        - use GT tokens at visible positions,
+        - use predicted tokens at masked positions.
+        pred_tokens: (B, L, D)  (ALL tokens in original order)
+        gt_imgs:     (B,T,C,H,W) (z-scored)
+        returns:     recon_z: (B,T,C,H,W) in z-score space
+        """
+        B, T, C, H, W = gt_imgs.shape
+        gt_tokens = self.model.patchify(gt_imgs)                  # (B,L,D)
+        # mask in original order is produced by the encoder (1=masked)
+        # we stored it from forward(...)
+        mask_tokens = self._last_mask_tokens                      # (B,L)
+
+        full_tokens = gt_tokens.clone()
+        m = mask_tokens.bool().unsqueeze(-1).expand_as(full_tokens)
+        full_tokens[m] = pred_tokens[m]                           # replace masked tokens with preds
+        recon_z = self.model.unpatchify(full_tokens, T, H, W)
+        return recon_z
+
+
+    def _avg_over_time(self, metric_fn, pred_raw, tgt_raw, pixel_mask_per_t=None):
+        """
+        pred_raw, tgt_raw: (B,T,C,H,W) in RAW scale.
+        If pixel_mask_per_t is provided: (B,T,1,H,W) with 1=masked (per time).
         """
         B, T, C, H, W = pred_raw.shape
-
         is_psnr = (metric_fn is self.train_psnr) or (metric_fn is self.val_psnr)
-        use_masked_psnr = (pixel_mask is not None) and is_psnr
 
-        if use_masked_psnr:
-            # masked-only PSNR via masked MSE
-            vals = []
-            dr2 = self.metric_data_range ** 2
-            for t in range(T):
-                mask = pixel_mask  # (B,1,H,W)
-                num = mask.sum().clamp_min(1)
-                mse = (((pred_raw[:, t] - tgt_raw[:, t]) ** 2) * mask).sum() / num
-                psnr_t = 10.0 * torch.log10(dr2 / mse.clamp_min(1e-12))
+        vals = []
+        for t in range(T):
+            if pixel_mask_per_t is not None and is_psnr:
+                m = pixel_mask_per_t[:, t]                        # (B,1,H,W)
+                num = m.sum().clamp_min(1)
+                mse = (((pred_raw[:, t] - tgt_raw[:, t]) ** 2) * m).sum() / num
+                psnr_t = 10.0 * torch.log10((self.metric_data_range ** 2) / mse.clamp_min(1e-12))
                 vals.append(psnr_t)
-            return torch.stack(vals).mean()
-
-        # Fallback: full-image TorchMetrics (no mask)
-        vals = []
-        for t in range(T):
-            vals.append(metric_fn(pred_raw[:, t], tgt_raw[:, t]))
+            else:
+                vals.append(metric_fn(pred_raw[:, t], tgt_raw[:, t]))
         return torch.stack(vals).mean()
 
-        # Otherwise, use TorchMetrics on full frame; average over T
-        vals = []
-        for t in range(T):
-            vals.append(metric_fn(pred_raw[:, t], tgt_raw[:, t]))
-        return torch.stack(vals).mean()
 
     def _maybe_build_pixel_mask(self, mask_tokens, T, H, W):
         """
@@ -225,7 +246,7 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
         return loss
 
-    def training_step(self, batch, batch_idx):
+    def training_stepxxxxx(self, batch, batch_idx):
         samples, timestamps = batch
         samples = samples.to(self.device, non_blocking=True)   # (B,T,C,H,W), z-scored
         timestamps = timestamps.to(self.device, non_blocking=True)
@@ -283,35 +304,68 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx):
         samples, timestamps = batch
-        samples = samples.to(self.device, non_blocking=True)   # (B,T,C,H,W), z-scored
+        samples = samples.to(self.device, non_blocking=True)   # (B,T,C,H,W) z-scored
         timestamps = timestamps.to(self.device, non_blocking=True)
 
-        loss, pred, mask_tokens = self.forward(samples, timestamps)
-        self.val_loss_avg.update(loss)
+        loss, pred_tokens, mask_tokens = self.forward(samples, timestamps)
+        self.train_loss_avg.update(loss)
+        # stash for merge helper
+        self._last_mask_tokens = mask_tokens
 
         B, T, C, H, W = samples.shape
-        pred_imgs = self.model.unpatchify(pred, T, H, W)       # z-scored
-        pred_raw  = self._inverse_standardize(pred_imgs)
-        tgt_raw   = self._inverse_standardize(samples)
 
-        pixel_mask = None
-        if self.log_masked_metrics and mask_tokens is not None:
-            pixel_mask = self._maybe_build_pixel_mask(mask_tokens, T, H, W)
+        # --- full MAE-style reconstruction (z-score space) ---
+        recon_z = self._merge_pred_with_visible(pred_tokens, samples)    # (B,T,C,H,W)
 
-        val_psnr_full = self._avg_over_time(self.val_psnr, pred_raw, tgt_raw, pixel_mask=None)
-        val_ssim_full = self._avg_over_time(self.val_ssim, pred_raw, tgt_raw, pixel_mask=None)
+        # back to RAW for metrics
+        pred_raw = self._inverse_standardize(recon_z)
+        tgt_raw  = self._inverse_standardize(samples)
+
+        # per-time pixel mask (1=masked)
+        pixel_mask_t = self._tokens_to_pixel_mask(mask_tokens, T, H, W)  # (B,T,1,H,W)
+
+        # metrics
+        train_psnr_full   = self._avg_over_time(self.train_psnr, pred_raw, tgt_raw, pixel_mask_per_t=None)
+        train_ssim_full   = self._avg_over_time(self.train_ssim, pred_raw, tgt_raw, pixel_mask_per_t=None)
+        train_psnr_masked = self._avg_over_time(self.train_psnr, pred_raw, tgt_raw, pixel_mask_per_t=pixel_mask_t)
+
+        self.log("train_loss", self.train_loss_avg.compute(), prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log("train_psnr", train_psnr_full,               prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log("train_ssim", train_ssim_full,               prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log("train_psnr_masked", train_psnr_masked,      prog_bar=False, sync_dist=True, batch_size=self.batch_size)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        samples, timestamps = batch
+        samples = samples.to(self.device, non_blocking=True)
+        timestamps = timestamps.to(self.device, non_blocking=True)
+
+        loss, pred_tokens, mask_tokens = self.forward(samples, timestamps)
+        self.val_loss_avg.update(loss)
+        self._last_mask_tokens = mask_tokens
+
+        B, T, C, H, W = samples.shape
+
+        recon_z = self._merge_pred_with_visible(pred_tokens, samples)
+        pred_raw = self._inverse_standardize(recon_z)
+        tgt_raw  = self._inverse_standardize(samples)
+
+        pixel_mask_t = self._tokens_to_pixel_mask(mask_tokens, T, H, W)
+
+        val_psnr_full   = self._avg_over_time(self.val_psnr, pred_raw, tgt_raw, pixel_mask_per_t=None)
+        val_ssim_full   = self._avg_over_time(self.val_ssim, pred_raw, tgt_raw, pixel_mask_per_t=None)
+        val_psnr_masked = self._avg_over_time(self.val_psnr, pred_raw, tgt_raw, pixel_mask_per_t=pixel_mask_t)
 
         self.log("val_loss", self.val_loss_avg.compute(), prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log("val_psnr", val_psnr_full,                 prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log("val_ssim", val_ssim_full,                 prog_bar=True, sync_dist=True, batch_size=self.batch_size)
-
-        if pixel_mask is not None:
-            val_psnr_masked = self._avg_over_time(self.val_psnr, pred_raw, tgt_raw, pixel_mask=pixel_mask)
-            self.log("val_psnr_masked", val_psnr_masked, prog_bar=False, sync_dist=True, batch_size=self.batch_size)
+        self.log("val_psnr_masked", val_psnr_masked,        prog_bar=False, sync_dist=True, batch_size=self.batch_size)
 
         return loss
+
 
     def configure_optimizersxxx(self):
 
