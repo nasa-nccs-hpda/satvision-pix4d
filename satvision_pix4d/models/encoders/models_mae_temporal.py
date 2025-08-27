@@ -403,6 +403,22 @@ class MaskedAutoencoderViT(nn.Module):
         ]
         return torch.cat(ts_embed_list, dim=1)
 
+    def forward(self, imgs, timestamps, mask_ratio=0.75, mask=None):
+        """
+        imgs:        (B,T,C,H,W)  standardized
+        timestamps:  (B,T,K)      integer features per timestep
+        mask_ratio:  float        fraction of tokens to mask
+        mask:        Optional[tensor] pre-shuffle indices (rarely used)
+        Returns:
+        loss: scalar tensor
+        pred: (B, L, p*p*C)  predicted tokens for ALL positions in original order
+        mask: (B, L)         1=masked, 0=visible in original order
+        """
+        latent, mask, ids_restore = self.forward_encoder(imgs, timestamps, mask_ratio, mask)
+        pred = self.forward_decoder(latent, timestamps, ids_restore)
+        loss = self.forward_loss(imgs, pred, mask)
+        return loss, pred, mask
+
     # ---------------- forward pass ----------------
     def forward_encoder(self, x, timestamps, mask_ratio, mask=None):
         B, T, C, H, W = x.shape
