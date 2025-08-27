@@ -139,38 +139,30 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
     def _maybe_build_pixel_mask(self, mask_tokens, T, H, W):
         """
-        Attempt to upsample the MAE patch mask to a pixel mask (B,1,H,W).
-        This assumes:
-          - mask_tokens: (B, N_patches) with 1 for masked, 0 for visible.
-          - self.model has an 'unpatchify' that maps token grids back to (B,T,C,H,W).
-        We build a dummy token map with 1s at masked tokens and 0 elsewhere for a single channel,
-        unpatchify it, and then threshold to {0,1}. If anything fails, return None.
+        Up-sample MAE patch mask (B, L) with 1=masked to pixel mask (B,1,H,W).
+        We create dummy tokens with last-dim p*p so that unpatchify computes C=1.
         """
         try:
-            B, Np = mask_tokens.shape
-            # Build a dummy token tensor shaped like the decoder target tokens.
-            # We need tokens in the same shape expected by unpatchify's input.
-            # Commonly pred (B, N_tokens, patch_dim). We'll mimic pred with channels=1.
+            B, L = mask_tokens.shape
             device = mask_tokens.device
-            ones = torch.ones((B, Np, 1), device=device, dtype=torch.float32)
-            zeros = torch.zeros((B, Np, 1), device=device, dtype=torch.float32)
-            token_mask = torch.where(mask_tokens.unsqueeze(-1) > 0.5, ones, zeros)
+            # infer patch size from the encoder
+            p = int(self.model.patch_embed.patch_size[0])
 
-            # Unpatchify expects (B, N_tokens, patch_dim) and returns (B,T,C,H,W).
-            # We'll get a (B,T,C=1,H,W) that marks masked regions ≈1.
-            pixel_mask_raw = self.model.unpatchify(token_mask, T, H, W)  # (B,T,1,H,W) if implemented that way
-            # If unpatchify returns (B,T,1,H,W), we collapse time by OR (any frame masked → masked)
+            # (B, L, p*p) with 1s where masked, 0s elsewhere
+            token_mask = (mask_tokens > 0.5).float().unsqueeze(-1)           # (B,L,1)
+            token_mask = token_mask.repeat(1, 1, p * p).to(device)           # (B,L,p*p)
+
+            # Unpatchify to (B,T,1,H,W)
+            pixel_mask_raw = self.model.unpatchify(token_mask, T, H, W)      # (B,T,1,H,W)
+            # Collapse time by OR: any frame masked → pixel masked
             if pixel_mask_raw.ndim == 5:
-                pixel_mask_raw = pixel_mask_raw.max(dim=1, keepdim=False).values  # (B,1,H,W)
-            # Binarize
-            pixel_mask = (pixel_mask_raw > 0.5).float()
-            # Ensure shape (B,1,H,W)
-            if pixel_mask.ndim == 3:
-                pixel_mask = pixel_mask.unsqueeze(1)
+                pixel_mask = (pixel_mask_raw.max(dim=1).values > 0.5).float()  # (B,1,H,W)
+            else:
+                pixel_mask = (pixel_mask_raw > 0.5).float().unsqueeze(1)       # (B,1,H,W)
             return pixel_mask
         except Exception:
-            # If the model's unpatchify cannot handle this path, silently fall back.
             return None
+
 
     @classmethod
     def load_checkpoint(cls, ckpt_path, config):
@@ -207,7 +199,7 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
     def forward(self, samples, timestamps):
         return self.model(
-            samples, timestamps, mask_ratio=self.mask_ratio)
+            samples, timestamps, self.mask_ratio)
 
     def training_stepxxx(self, batch, batch_idx):
         samples, timestamps = batch
