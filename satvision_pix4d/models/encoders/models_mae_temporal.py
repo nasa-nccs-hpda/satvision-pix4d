@@ -407,40 +407,44 @@ class MaskedAutoencoderViT(nn.Module):
     def forward_encoder(self, x, timestamps, mask_ratio, mask=None):
         B, T, C, H, W = x.shape
 
-        # patch + linear project to tokens
+        # patch -> tokens
         x_flat = x.reshape(B * T, C, H, W)
-        x_emb = self.patch_embed(x_flat)     # (B*T, L_per_step, embed_dim)
+        x_emb = self.patch_embed(x_flat)                 # (B*T, Ls, embed_dim)
         L_per_step = x_emb.shape[1]
-        x_emb = x_emb.reshape(B, T * L_per_step, -1)  # (B, L, embed_dim) with L=T*L_per_step
+        x_emb = x_emb.reshape(B, T * L_per_step, -1)     # (B, L, embed_dim)
 
         grid_size = int(L_per_step ** 0.5)
 
-        # pos embed (set to same dim as embed_dim so we can concat with ts and project)
+        # positional (numpy -> torch)
         pos_embed_spatial = get_2d_sincos_pos_embed(
-            embed_dim=x_emb.shape[2],  # == embed_dim
-            grid_size=grid_size,
-            cls_token=False,
+            embed_dim=x_emb.shape[2], grid_size=grid_size, cls_token=False
         )
-        pos_embed_spatial = torch.from_numpy(pos_embed_spatial).to(x.device).to(x_emb.dtype)
-        pos_embed_spatial = pos_embed_spatial.repeat(T, 1).unsqueeze(0).expand(B, -1, -1)  # (B, L, embed_dim)
+        pos_embed_spatial = torch.from_numpy(pos_embed_spatial).to(x.device)
 
-        # temporal embed (size = n_time_components * enc_ts_dim_per_comp)
+        # temporal
         timestamps_flat = timestamps.reshape(B * T, -1)
         ts_embed = self._compute_temporal_embedding(
             timestamps_flat, embed_dim_per_component=self.enc_ts_dim_per_comp
-        )  # (B*T, n_comp*enc_dim)
+        )
         ts_embed = ts_embed.reshape(B, T, 1, -1).expand(B, T, L_per_step, -1).reshape(B, T * L_per_step, -1)
 
-        # concat and project to embed_dim
-        embedding = torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        # >>> ensure all inputs match the projection layer's dtype <<<
+        proj_dtype = self.encoder_temporal_spatial_proj.weight.dtype
+        x_emb = x_emb.to(proj_dtype)
+        pos_embed_spatial = pos_embed_spatial.to(proj_dtype)
+        ts_embed = ts_embed.to(proj_dtype)
+
+        # concat & project to embed_dim
+        embedding = torch.cat([pos_embed_spatial.repeat(T, 1).unsqueeze(0).expand(B, -1, -1), ts_embed], dim=-1)
+        embedding = embedding.to(proj_dtype)
+
         x = x_emb + self.encoder_temporal_spatial_proj(embedding)
 
+        # keep the rest as-is
         x = x.to(self.cls_token.dtype)
         x, mask, ids_restore = self.random_masking(x, mask_ratio, mask=mask)
-
         cls_token = self.cls_token.expand(B, -1, -1)
         x = torch.cat([cls_token, x], dim=1)
-
         for blk in self.blocks:
             x = blk(x.to(self.cls_token.dtype))
         x = self.norm(x)
@@ -454,7 +458,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         x = self.decoder_embed(x)
 
-        # reinsert masked tokens (following MAE)
+        # reinserting masked tokens (as before)
         mask_tokens = self.mask_token.repeat(B, L + 1 - x.shape[1], 1)
         x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)
         x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).expand(-1, -1, x.shape[2]))
@@ -462,31 +466,32 @@ class MaskedAutoencoderViT(nn.Module):
 
         grid_size = int(L_per_step ** 0.5)
 
-        # pos embed for decoder (dim = decoder_embed_dim)
+        # positional for decoder
         pos_embed_spatial = get_2d_sincos_pos_embed(
-            embed_dim=x.shape[2],
-            grid_size=grid_size,
-            cls_token=False,
+            embed_dim=x.shape[2], grid_size=grid_size, cls_token=False
         )
-        pos_embed_spatial = torch.from_numpy(pos_embed_spatial).to(x.device).to(x.dtype)
+        pos_embed_spatial = torch.from_numpy(pos_embed_spatial).to(x.device)
         pos_embed_spatial = pos_embed_spatial.repeat(T, 1)
         pos_embed_spatial = torch.cat([
             torch.zeros(1, pos_embed_spatial.shape[1], device=x.device),
             pos_embed_spatial,
-        ], dim=0).unsqueeze(0).expand(B, -1, -1)  # (B, L+1, dec_dim)
+        ], dim=0).unsqueeze(0).expand(B, -1, -1)
 
-        # temporal embed for decoder
+        # temporal for decoder
         timestamps_flat = timestamps.reshape(B * T, -1)
         ts_embed = self._compute_temporal_embedding(
             timestamps_flat, embed_dim_per_component=self.dec_ts_dim_per_comp
-        )  # (B*T, n_comp*dec_dim_per_comp)
+        )
         ts_embed = ts_embed.reshape(B, T, 1, -1).expand(B, T, L_per_step, -1).reshape(B, T * L_per_step, -1)
-        ts_embed = torch.cat([
-            torch.zeros(B, 1, ts_embed.shape[-1], device=x.device),
-            ts_embed,
-        ], dim=1)  # (B, L+1, n_comp*dec_dim_per_comp)
+        ts_embed = torch.cat([torch.zeros(B, 1, ts_embed.shape[-1], device=x.device), ts_embed], dim=1)
 
-        embedding = torch.cat([pos_embed_spatial, ts_embed], dim=-1)
+        # >>> ensure dtype matches decoder projection layer <<<
+        proj_dtype = self.decoder_temporal_spatial_proj.weight.dtype
+        x = x.to(proj_dtype)
+        pos_embed_spatial = pos_embed_spatial.to(proj_dtype)
+        ts_embed = ts_embed.to(proj_dtype)
+
+        embedding = torch.cat([pos_embed_spatial, ts_embed], dim=-1).to(proj_dtype)
         x = x + self.decoder_temporal_spatial_proj(embedding)
 
         x = x.to(self.cls_token.dtype)
@@ -494,25 +499,9 @@ class MaskedAutoencoderViT(nn.Module):
             x = blk(x.to(self.cls_token.dtype))
         x = self.decoder_norm(x)
         x = self.decoder_pred(x)
-        x = x[:, 1:, :]  # drop cls
-        return x  # (B, L, p*p*C)  -- all tokens in original order
+        x = x[:, 1:, :]
+        return x
 
-    def forward_loss(self, imgs, pred, mask):
-        target = self.patchify(imgs)
-        if self.norm_pix_loss:
-            mean = target.mean(dim=-1, keepdim=True)
-            var = target.var(dim=-1, keepdim=True)
-            target = (target - mean) / (var + 1.0e-6) ** 0.5
-        loss = (pred - target) ** 2
-        loss = loss.mean(dim=-1)
-        loss = (loss * mask).sum() / mask.sum()  # masked tokens only
-        return loss
-
-    def forward(self, imgs, timestamps, mask_ratio=0.75, mask=None):
-        latent, mask, ids_restore = self.forward_encoder(imgs, timestamps, mask_ratio, mask)
-        pred = self.forward_decoder(latent, timestamps, ids_restore)
-        loss = self.forward_loss(imgs, pred, mask)
-        return loss, pred, mask
 
 
 # Test
