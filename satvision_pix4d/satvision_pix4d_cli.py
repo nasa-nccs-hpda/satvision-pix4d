@@ -74,12 +74,12 @@ def main(config, output_dir):
     # MLflow logger
     mlflow_logger = MLFlowLogger(
         experiment_name=config.TAG,
-        # tracking_uri="file://" + os.path.abspath(config.OUTPUT),
-        tracking_uri="file:///explore/nobackup/projects/pix4dcloud/mlruns",
+        tracking_uri=config.MLFLOW.URI,
         tags={
             "Model": config.MODEL.NAME,
             "Pipeline": config.PIPELINE,
-            "Notes": config.DESCRIPTION if hasattr(config, "DESCRIPTION") else "",
+            "Notes":
+                config.DESCRIPTION if hasattr(config, "DESCRIPTION") else "",
         }
     )
     mlflow_logger.experiment.log_artifact(

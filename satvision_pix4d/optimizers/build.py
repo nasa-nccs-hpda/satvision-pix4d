@@ -138,11 +138,9 @@ def build_optimizer(config, model, is_pretrain=False):
         lr=config.TRAIN.BASE_LR,
         weight_decay=config.TRAIN.WEIGHT_DECAY
     )
-    
 
     logging.info(optimizer)
     return optimizer
-
 
 
 # -----------------------------------------------------------------------------

@@ -8,10 +8,12 @@ from torch.utils.data import DataLoader
 from satvision_pix4d.models.encoders.mae import build_satmae_model
 from satvision_pix4d.optimizers.build import build_optimizer
 
+
 # -----------------------------------------------------------------------------
 # SatVisionPix4DSatMAEPretrain
 # -----------------------------------------------------------------------------
 class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
+
     def __init__(self, config):
         super(SatVisionPix4DSatMAEPretrain, self).__init__()
         self.save_hyperparameters(ignore=['model'])
@@ -28,24 +30,29 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
         # Training Metrics
         self.train_loss_avg = torchmetrics.MeanMetric()
-        self.train_psnr = torchmetrics.image.PeakSignalNoiseRatio(data_range=1.0)
-        self.train_ssim = torchmetrics.image.StructuralSimilarityIndexMeasure(data_range=1.0)
+        self.train_psnr = torchmetrics.image.PeakSignalNoiseRatio(
+            data_range=1.0)
+        self.train_ssim = torchmetrics.image.StructuralSimilarityIndexMeasure(
+            data_range=1.0)
 
         # Validation Metrics
         self.val_loss_avg = torchmetrics.MeanMetric()
         self.val_psnr = torchmetrics.image.PeakSignalNoiseRatio(data_range=1.0)
-        self.val_ssim = torchmetrics.image.StructuralSimilarityIndexMeasure(data_range=1.0)
+        self.val_ssim = torchmetrics.image.StructuralSimilarityIndexMeasure(
+            data_range=1.0)
 
     @classmethod
     def load_checkpoint(cls, ckpt_path, config):
         """
-        Load model from either a Lightning .ckpt file or a DeepSpeed .pt checkpoint.
+        Load model from either a Lightning .ckpt 
+        file or a DeepSpeed .pt checkpoint.
         """
         if ckpt_path.endswith(".pt") or "mp_rank" in ckpt_path:
             logging.info(f"Loading DeepSpeed checkpoint: {ckpt_path}")
             model = cls(config)
 
-            checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            checkpoint = torch.load(
+                ckpt_path, map_location="cpu", weights_only=False)
             state_dict = checkpoint.get("module", checkpoint)
 
             # Strip "model." prefix if present
@@ -58,7 +65,8 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
                 cleaned_state_dict, strict=False
             )
 
-            logging.info(f"Loaded DeepSpeed weights with {len(missing_keys)} missing and {len(unexpected_keys)} unexpected keys.")
+            logging.info(
+                f"Loaded DeepSpeed weights with {len(missing_keys)} missing and {len(unexpected_keys)} unexpected keys.")
             return model
 
         else:
@@ -67,7 +75,8 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
 
 
     def forward(self, samples, timestamps):
-        return self.model(samples, timestamps, mask_ratio=self.config.DATA.MASK_RATIO)
+        return self.model(
+            samples, timestamps, mask_ratio=self.config.DATA.MASK_RATIO)
 
     def training_step(self, batch, batch_idx):
         samples, timestamps = batch
@@ -118,11 +127,13 @@ class SatVisionPix4DSatMAEPretrain(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
+
         optimizer = build_optimizer(self.config, self.model, is_pretrain=True)
 
         # Compute total steps
         total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = int(self.config.TRAIN.WARMUP_EPOCHS * (total_steps / self.config.TRAIN.EPOCHS))
+        warmup_steps = int(
+            self.config.TRAIN.WARMUP_EPOCHS * (total_steps / self.config.TRAIN.EPOCHS))
         cosine_steps = total_steps - warmup_steps
 
         # Warmup scheduler

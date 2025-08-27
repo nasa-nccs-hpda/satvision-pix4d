@@ -28,7 +28,8 @@ class ABITemporalDataModule(LightningDataModule):
         self.pin_memory = config.DATA.PIN_MEMORY
         self.drop_last = config.DATA.DROP_LAST
 
-        self.transform = None 
+        self.transform = None
+
         #transforms.Compose(
         #    [
         #        transforms.ToTensor(),
