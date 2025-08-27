@@ -180,6 +180,10 @@ _C.TRAIN.LAYER_DECAY = 1.0
 _C.TENSORBOARD = CN()
 _C.TENSORBOARD.WRITER_DIR = '.'
 
+# MLFlow configuration settings
+_C.MLFLOW = CN()
+_C.MLFLOW.URI = None
+
 # DeepSpeed configuration settings
 _C.DEEPSPEED = CN()
 _C.DEEPSPEED.STAGE = 2
