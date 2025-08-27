@@ -403,17 +403,29 @@ class MaskedAutoencoderViT(nn.Module):
         ]
         return torch.cat(ts_embed_list, dim=1)
 
+    def forward_loss(self, imgs, pred, mask):
+        """
+        imgs: (B,T,C,H,W)  z-scored
+        pred: (B,L,p*p*C)  ALL tokens in original order (after ids_restore)
+        mask: (B,L)        1=masked, 0=visible in original order
+        """
+        target = self.patchify(imgs)                 # (B,L,p*p*C)
+        # match precision for mixed precision runs (bf16/fp16/fp32)
+        target = target.to(pred.dtype)
+        # optional per-token normalization (like MAE)
+        if self.norm_pix_loss:
+            mean = target.mean(dim=-1, keepdim=True)
+            var  = target.var(dim=-1, keepdim=True)
+            target = (target - mean) / (var + 1.0e-6).sqrt()
+
+        # MSE per token, then average over masked tokens only
+        loss = (pred - target) ** 2                  # (B,L,p*p*C)
+        loss = loss.mean(dim=-1)                     # (B,L)
+        denom = mask.sum().clamp_min(1)              # safety
+        loss = (loss * mask).sum() / denom
+        return loss
+
     def forward(self, imgs, timestamps, mask_ratio=0.75, mask=None):
-        """
-        imgs:        (B,T,C,H,W)  standardized
-        timestamps:  (B,T,K)      integer features per timestep
-        mask_ratio:  float        fraction of tokens to mask
-        mask:        Optional[tensor] pre-shuffle indices (rarely used)
-        Returns:
-        loss: scalar tensor
-        pred: (B, L, p*p*C)  predicted tokens for ALL positions in original order
-        mask: (B, L)         1=masked, 0=visible in original order
-        """
         latent, mask, ids_restore = self.forward_encoder(imgs, timestamps, mask_ratio, mask)
         pred = self.forward_decoder(latent, timestamps, ids_restore)
         loss = self.forward_loss(imgs, pred, mask)
