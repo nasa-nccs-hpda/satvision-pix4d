@@ -32,16 +32,7 @@ class ABITemporalDataset(Dataset):
         # self.transform = transform
         # self.transform = PerTileMinMaxNormalize()
         # /home/jacaraba/satvision-pix4d/satvision_pix4d/transforms/min_max.py
-        self.transform = PerChannelStandardize(
-            mean=[127.34686819, 74.7938111, 44.78416806, 0.92638064, 8.63405386,
-                2.11682601, 0.6701766, 3.00366557, 8.60859377, 14.6878577,
-                46.23647303, 36.75061689, 80.34350524, 92.54769503,
-                101.56140718, 85.76285184],
-            std=[57.3661886, 53.84979581, 37.15785529, 2.66545547, 8.2306831,
-                2.00586419, 0.24013674, 0.57227082, 1.53546711, 2.40714125,
-                6.63860341, 5.02559105, 9.92560728, 10.89802816, 11.07162115,
-                8.08676479]
-        )
+        self.transform = None
 
         if temporal_embeddings is None:
             self.temporal_embeddings = ["year", "month", "hour"]
