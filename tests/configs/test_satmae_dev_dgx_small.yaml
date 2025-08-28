@@ -6,7 +6,7 @@ OUTPUT: '/raid/jacaraba/models'
 MODEL:
   TYPE: satmae
   NAME: satmae_satvision_pix4d_pretrain-dev
-  DROP_PATH_RATE: 0.1
+  DROP_PATH_RATE: 0.0                 # ↓ turn off regularization
   MAE_VIT:
     PATCH_SIZE: 16
     IN_CHANS: 16
@@ -21,44 +21,39 @@ MODEL:
 
 DATA:
   DATAMODULE: True
-  BATCH_SIZE: 4
-  LENGTH: 1_920_000
+  BATCH_SIZE: 2                        # ensure >1 batches/epoch with 10 tiles
+  LENGTH: 200                          # if your datamodule uses this for steps/epoch
   SHUFFLE: True
   PIN_MEMORY: True
   NUM_WORKERS: 4
   PERSISTENT_WORKERS: True
-  TRAIN_DATA_PATHS: [
-    "/raid/jacaraba/convection-small"
-  ]
-  VAL_DATA_PATHS: [
-    "/raid/jacaraba/convection-small",
-  ]
+  TRAIN_DATA_PATHS: ["/raid/jacaraba/convection-small"]
+  VAL_DATA_PATHS:   ["/raid/jacaraba/convection-small"]
   IMG_SIZE: 512
-  MASK_PATCH_SIZE: 8
+  MASK_PATCH_SIZE: 16                  # match model patch size (or drop this field)
   MASK_RATIO: 0.25
 
 TRAIN:
   ACCELERATOR: 'gpu'
-  STRATEGY: 'deepspeed'
+  STRATEGY: 'auto'                     # keep it simple; avoid deepspeed here
   USE_CHECKPOINT: True
-  EPOCHS: 400
-  WARMUP_EPOCHS: 10
-  BASE_LR: 3e-4
-  MIN_LR: 2e-4
-  WARMUP_LR: 1e-4
-  WEIGHT_DECAY: 0.05
+  EPOCHS: 60                           # enough to see clear overfit
+  WARMUP_EPOCHS: 2                     # with tiny steps, keep warmup short
+  BASE_LR: 1e-3                        # push learning faster for overfit
+  MIN_LR: 1e-6                         # allow cosine to decay
+  WARMUP_LR: 1e-6
+  WEIGHT_DECAY: 0.0                    # ↓ turn off regularization
   LR_SCHEDULER:
-    NAME: 'multistep'
-    GAMMA: 0.1
-    MULTISTEPS: [700,]
+    NAME: 'cosine'                     # note: your module overrides this anyway
+
 MLFLOW:
   URI: 'file:///raid/jacaraba/mlruns/satvision-pix4d'
 
 DEEPSPEED:
-  STAGE: 2
+  STAGE: 0                             # effectively off; ignored if STRATEGY='auto'
 
-PRECISION: 'bf16-mixed'
+PRECISION: '32-true'                   # avoid bf16/amp for debugging
 
-PRINT_FREQ: 10 
-SAVE_FREQ: 50
+PRINT_FREQ: 1
+SAVE_FREQ: 10
 TAG: satmae_satvision_pix4d_pretrain-dev
