@@ -306,8 +306,6 @@ class MaskedAutoencoderViT(nn.Module):
             Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
             for _ in range(depth)
         ])
-        for blk in self.blocks:
-            blk.attn = FlashMHAWrapper(embed_dim, num_heads=num_heads, dropout=0.0, causal=False)
 
         self.norm = norm_layer(embed_dim)
 
@@ -317,8 +315,6 @@ class MaskedAutoencoderViT(nn.Module):
             Block(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
             for _ in range(decoder_depth)
         ])
-        for blk in self.decoder_blocks:
-            blk.attn = FlashMHAWrapper(decoder_embed_dim, num_heads=decoder_num_heads, dropout=0.0, causal=False)
 
         self.decoder_norm = norm_layer(decoder_embed_dim)
         self.decoder_pred = nn.Linear(decoder_embed_dim, patch_size ** 2 * in_chans, bias=True)
