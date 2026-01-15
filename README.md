@@ -1,78 +1,204 @@
-# satvision-pix4d
+# SatVision-Pix4D
 
-SatVision PIX4D
+SatVision-PIX4D is a scalable data generation and pre-training pipeline for geostationary satellite imagery, designed to support self-supervised and foundation-model development using ABI L1 data. The system is optimized for execution on NASA NCCS HPC resources using Singularity containers and supports stratified tile generation (e.g., convection, cloud systems, land cover).
 
-## Download Container
+## 1. Container Setup
+
+### Download and Build Container (Singularity Sandbox)
 
 ```bash
 module load singularity
-singularity build --sandbox /lscratch/jacaraba/container/satvision-pix4d docker://nasanccs/satvision-pix4d:latest
+singularity build --sandbox /lscratch/$USER/container/satvision-pix4d \
+  docker://nasanccs/satvision-pix4d:latest
+````
+
+> **Note**
+> The sandbox format is recommended for development and debugging on NCCS GPU nodes. The container is OCI compliant and can be used with any container engine.
+
+## 2. Tile Generation Pipelines
+
+All pipelines are driven through the unified CLI:
+
+```
+satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py
 ```
 
-## Random Tiles Generator
+Ensure `PYTHONPATH` is set to the path where the code was cloned when running inside the container.
+In the future version of this software the Python package will be installed as part of the container.
+Right now during development is easier to import the PYTHONPATH.
+
+### 2.1 ABI + CloudSat Tile Generator
 
 ```bash
-singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects /lscratch/jacaraba/container/satvision-pix4d python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py
+singularity exec \
+  --env PYTHONPATH=/explore/nobackup/people/$USER/development/satvision-pix4d \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css,/nfs4m \
+  /lscratch/$USER/container/satvision-pix4d \
+  python /explore/nobackup/people/$USER/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_cropping_cli.py
 ```
 
-## Convection Tiles Generator
+---
+
+### 2.2 Random ABI Tile Generator (Baseline)
+
+Generates random spatial tiles without stratification.
 
 ```bash
-singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css /lscratch/jacaraba/container/satvision-pix4d python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py --stratification convection --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d
+singularity exec \
+  --env PYTHONPATH=/explore/nobackup/people/$USER/development/satvision-pix4d \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects \
+  /lscratch/$USER/container/satvision-pix4d \
+  python /explore/nobackup/people/$USER/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py
 ```
+---
 
-with local files (a little bit broken for now, some files were never downloaded)
+### 2.3 Convection-Stratified Tile Generator
+
+Uses external cloud-system masks to target convective regions.
 
 ```bash
-singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css,/nfs4m /lscratch/jacaraba/container/satvision-pix4d python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py --stratification convection --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d --tile-size 512 --channels 1 2 --local-data-dir '/css/geostationary/BackStage/GOES-16-ABI-L1B-FULLD'
+singularity exec \
+  --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d \
+  --nv \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css \
+  /lscratch/jacaraba/container/satvision-pix4d \
+  python /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
+satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py \
+  --stratification convection \
+  --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" \
+  --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d
 ```
 
-from AWS only
+---
+
+### 2.4 Convection Tiles with Local ABI Files (Experimental)
+
+⚠️ **Known limitation**: some local ABI files may be missing or incomplete.
 
 ```bash
-singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css,/nfs4m /lscratch/jacaraba/container/satvision-pix4d python [jacaraba@gpu100 satvision-pix4d]$ singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/peop[jacaraba@gpu100 satvision-pix4d]$ singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css,/nfs4m /lscratch/jacaraba/container/satvision-pix4d python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py --stratification convection --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d --tile-size 512 --channels 1 2 
+singularity exec \
+  --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d \
+  --nv \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css,/nfs4m \
+  /lscratch/jacaraba/container/satvision-pix4d \
+  python /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
+satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py \
+  --stratification convection \
+  --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" \
+  --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d \
+  --tile-size 512 \
+  --channels 1 2 \
+  --local-data-dir "/css/geostationary/BackStage/GOES-16-ABI-L1B-FULLD"
 ```
 
-### Gathering Some Metrics
+---
 
-- Just to stack the 16 bands for a single time period ~40GB max of RAM, 3 minutes 30 seconds (need 7 timesteps)
-- Doing sliding windows of 14 timesteps to get the best 7 timesteps windows
+### 2.5 AWS-Only ABI Access
 
-## Stratified Tiles Generator
-
-### Bucket #1: Convection Tiles
+Uses on-the-fly downloads from AWS (no local ABI dependency).
 
 ```bash
-singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects /lscratch/jacaraba/container/satvision-pix4d python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py
+singularity exec \
+  --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d \
+  --nv \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css,/nfs4m \
+  /lscratch/jacaraba/container/satvision-pix4d \
+  python /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
+satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py \
+  --stratification convection \
+  --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" \
+  --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d \
+  --tile-size 512 \
+  --channels 1 2
 ```
 
-If you only want to generate the metadata:
+---
+
+## 3. Performance Notes / Metrics
+
+Empirical measurements on NCCS GPU nodes:
+
+* **16 ABI bands × single timestep**
+
+  * ~40 GB RAM
+  * ~3.5 minutes
+* **Temporal windowing**
+
+  * Sliding windows over 14 timesteps
+  * Select best 7-timestep subsequence for pre-training
+
+---
+
+## 4. Stratified Tile Buckets
+
+### Bucket 1: Convection Tiles
+
+(Default when `--stratification convection` is used.)
+
+### Bucket 2: Cloud Feature Tiles
+
+Planned support for cloud-property-driven stratification
+(e.g., cloud type, texture, organization).
+
+### Bucket 3: Land-Cover Tiles
+
+Planned stratification using MODIS land-cover classes for global balance.
+
+---
+
+## 5. Metadata-Only Generation
+
+Generate tile metadata without extracting pixel data:
 
 ```bash
-singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects /lscratch/jacaraba/container/satvision-pix4d python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/readers/convection_reader.py
+singularity exec \
+  --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d \
+  --nv \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects \
+  /lscratch/jacaraba/container/satvision-pix4d \
+  python /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
+satvision_pix4d/readers/convection_reader.py
 ```
 
-### Bucket #2: Cloud Feature Tiles
+---
 
-### Bucket #3: Land Cover Tiles
+## 6. Pre-Training Workflows
 
-## Pre-training
-
-### Development Mode
-
-Shell into the container:
+### 6.1 Development Mode (Interactive)
 
 ```bash
-singularity shell --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/lscratch /lscratch/jacaraba/container/satvision-pix4d
+singularity shell \
+  --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d \
+  --nv \
+  -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/lscratch \
+  /lscratch/jacaraba/container/satvision-pix4d
 ```
 
-Testing SatMAE:
+---
+
+### 6.2 Testing SatMAE Configuration
 
 ```bash
-TRITON_CACHE_DIR="/lscratch/jacaraba/triton_cache" python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/satvision_pix4d_cli.py -c /explore/nobackup/people/jacaraba/development/satvision-pix4d/tests/configs/test_satmae_dev.yaml
+TRITON_CACHE_DIR="/lscratch/jacaraba/triton_cache" \
+python /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
+satvision_pix4d/satvision_pix4d_cli.py \
+  -c /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
+tests/configs/test_satmae_dev.yaml
 ```
 
-### Actual Runs
+---
 
-```bash
-```
+### 6.3 Production Runs
+
+🚧 To be documented (Slurm orchestration, training recipes, checkpoints).
+
+---
+
+## 7. Status Summary
+
+* ✅ ABI L1 ingestion (AWS + local)
+* ✅ Convection-based stratification
+* ✅ Large-scale tile generation
+* 🚧 Cloud feature stratification
+* 🚧 Land-cover stratification
+* 🚧 End-to-end pre-training recipes
