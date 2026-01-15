@@ -64,7 +64,7 @@ class ABITileExtractor:
 
         assert satellite in ["goes16", "goes17"]
         self.satellite: str = satellite
-        self.domain: str = domain # ({'C', 'F', 'M'})
+        self.domain: str = domain  # ({'C', 'F', 'M'})
 
         if self.satellite == "goes16":
             self.default_projection = "+proj=geos +h=35786023 +a=6378137 +b=6356752.31414 +lon_0=-75 +sweep=x +no_defs"
@@ -187,7 +187,8 @@ class ABITileExtractor:
 
             # Get the middle timestep for each system
             middle_df = convection_metadata_df.groupby(
-                "system_id", group_keys=False).apply(get_middle_row).reset_index(drop=True)
+                "system_id", group_keys=False).apply(
+                    get_middle_row).reset_index(drop=True)
 
             logging.info("✅ Middle timestep per system extracted.")
 
@@ -198,9 +199,11 @@ class ABITileExtractor:
 
     def _extract_from_convection_metadata(self, metadata_df):
 
-        logging.info(f"Extracting tiles for {len(metadata_df)} unique systems...")
+        logging.info(
+            f"Extracting tiles for {len(metadata_df)} unique systems...")
 
-        for _, rec in tqdm(metadata_df.iterrows(), total=len(metadata_df), desc="Extracting ABI tiles"):
+        for _, rec in tqdm(
+            metadata_df.iterrows(), total=len(metadata_df), desc="Extracting ABI tiles"):
 
             dt = pd.to_datetime(rec["datetime"])
             sys_id = rec["system_id"]
@@ -313,7 +316,6 @@ class ABITileExtractor:
             raise RuntimeError(f"No bands loaded for datetime {dt}.")
 
         return xr.concat(band_stack, dim="band")
-
 
     def _extract_tile(self, arr, center_y, center_x):
         half = self.tile_size // 2

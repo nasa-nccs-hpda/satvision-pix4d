@@ -137,8 +137,6 @@ class ABIConvectionTileExtractor:
 
         return xr.concat(band_stack, dim="band")
 
-
-
     def _extract_tile(self, arr, center_y, center_x):
         half = self.tile_size // 2
         return arr.isel(
