@@ -115,7 +115,9 @@ RUN pip --no-cache-dir install --ignore-installed blinker \
     pyresample \
     netCDF4 \
     h5py \
-    goes2go
+    goes2go \
+    pyhdf \
+    geopy
 
 HEALTHCHECK NONE
 ENTRYPOINT []
