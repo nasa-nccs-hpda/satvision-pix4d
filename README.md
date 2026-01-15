@@ -59,14 +59,12 @@ Uses external cloud-system masks to target convective regions.
 ```bash
 singularity exec \
   --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/satvision-pix4d \
-  --nv \
   -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects,/css \
   /lscratch/jacaraba/container/satvision-pix4d \
-  python /explore/nobackup/people/jacaraba/development/satvision-pix4d/\
-satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py \
+  python /explore/nobackup/people/jacaraba/development/satvision-pix4d/satvision_pix4d/view/abi_tiles_generator_pipeline_cli.py \
   --stratification convection \
   --convection-regex "/explore/nobackup/projects/pix4dcloud/Jingbo/cloudsystem_mask_2019-2020/2020*.nc" \
-  --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tiles_pix4d
+  --output-dir /explore/nobackup/projects/pix4dcloud/jacaraba/tests/tiles_pix4d
 ```
 
 ---

@@ -113,7 +113,9 @@ RUN pip --no-cache-dir install \
     pyresample \
     netCDF4 \
     h5py \
-    goes2go
+    goes2go \
+    pyhdf \
+    geopy
     # git+https://github.com/nasa-nccs-hpda/satvision-toa.git@main
 
 HEALTHCHECK NONE

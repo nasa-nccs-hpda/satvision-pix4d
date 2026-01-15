@@ -27,7 +27,7 @@ class ABIRandomTileExtractor:
         overwrite: bool = False,
         num_tiles: int = 1000,
         cadence_minutes: int = 20,
-        n_timesteps: int = 2,
+        n_timesteps: int = 7,
         # time window: pick something explicit; user can override in CLI later
         start_dt: str = "2020-01-01T00:00:00",
         end_dt: str = "2020-12-31T23:59:59",
