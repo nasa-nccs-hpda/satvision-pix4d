@@ -12,6 +12,9 @@ warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 from satvision_pix4d.pipelines.abi_tiles_generator_convection_pipeline import \
     ABIConvectionTileExtractor
 
+from satvision_pix4d.pipelines.abi_tiles_generator_random_pipeline import \
+    ABIRandomTileExtractor
+
 
 # -----------------------------------------------------------------------------
 # main
@@ -131,11 +134,21 @@ def main():
         help='Overwrite any existing downloaded files (default: False)'
     )
 
+    parser.add_argument('--num-tiles', type=int, default=5, help='Number of random tiles to generate')
+    parser.add_argument('--start-dt', type=str, default="2019-01-01T00:00:00", help='Random sampling start datetime (ISO)')
+    parser.add_argument('--end-dt', type=str, default="2019-01-10T23:59:59", help='Random sampling end datetime (ISO)')
+    parser.add_argument('--seed', type=int, default=0, help='Random seed')
+
     args = parser.parse_args()
 
-    # 🚨 Validate that --convection-regex is provided if stratification is convection
-    if args.stratification_strategy == 'convection' and not args.convection_regex:
-        parser.error("The --convection-regex argument is required when stratification is 'convection'.")
+    # 🚨 Validate that --convection-regex is provided
+    # if stratification is convection
+    # add clouds and landcover validation here
+    if args.stratification_strategy == 'convection' \
+            and not args.convection_regex:
+        parser.error(
+            "The --convection-regex argument is required"
+            " when stratification is 'convection'.")
 
     # Setup logger
     logger = logging.getLogger()
@@ -152,9 +165,26 @@ def main():
     # Setup timer to monitor script execution time
     timer = time.time()
 
-    logging.info(f"Proceeding to generate tiles via '{args.stratification_strategy}' stratification.")
+    logging.info(
+        f"Generating tiles via '{args.stratification_strategy}' strategy.")
 
-    if args.stratification_strategy == 'convection':
+    if args.stratification_strategy == 'random':
+        pipeline = ABIRandomTileExtractor(
+            output_dir=args.output_dir,
+            tile_size=args.tile_size,
+            channels=args.channels,
+            satellite=args.satellite,
+            product=args.product,
+            domain=args.domain,
+            download=args.download,
+            overwrite=args.overwrite,
+            num_tiles=args.num_tiles,
+            start_dt=args.start_dt,
+            end_dt=args.end_dt,
+            seed=args.seed,
+        )
+
+    elif args.stratification_strategy == 'convection':
         pipeline = ABIConvectionTileExtractor(
             output_dir=args.output_dir,
             convection_regex=args.convection_regex,
@@ -168,23 +198,9 @@ def main():
             overwrite=args.overwrite,
         )
 
-    # Set pipeline
-    #pipeline = ABITileExtractor(
-    #    stratification_strategy=args.stratification_strategy,
-    #    output_dir=args.output_dir,
-    #    convection_regex=args.convection_regex
-    #    #tile_size=args.tile_size,
-    #    #stride=args.stride,
-    #    #num_tiles_per_image=args.n_tiles,
-    #    #output_extension=args.output_extension,
-    #    #num_workers=args.n_workers
-    #)
-
-    # Process images
     pipeline.gen_tiles()
 
-    # logging.info(f'Took {(time.time()-timer)/60.0:.2f} min.')
-
+    logging.info(f'Took {(time.time()-timer)/60.0:.2f} min.')
     return
 
 
