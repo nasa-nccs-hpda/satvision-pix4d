@@ -3,7 +3,7 @@ name: CI to Dockerhub Dev
 on:
   push:
     branches:
-      - 'develop'
+      - 'dev'
 
 jobs:
   docker:
