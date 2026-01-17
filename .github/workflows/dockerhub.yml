@@ -6,7 +6,7 @@ on:
       - 'main'
 
 jobs:
-  docker:
+  docker-amd:
     runs-on: ubuntu-latest
     steps:
       -
@@ -159,7 +159,7 @@ jobs:
           tags: nasanccs/satvision-pix4d:arm64
 
   manifest:
-    needs: [docker, docker-arm]
+    needs: [docker-amd, docker-arm]
     runs-on: ubuntu-latest
     steps:
       - name: Login to Docker Hub
