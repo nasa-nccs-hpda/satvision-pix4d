@@ -100,7 +100,7 @@ RUN pip --no-cache-dir install --ignore-installed blinker \
     segmentation-models \
     timm \
     'mlflow>=1.0.0' \
-    flash-attn \
+    #flash-attn \
     supervision \
     pytest \
     coveralls \
