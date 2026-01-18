@@ -167,10 +167,17 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
+      - name: Extract per-platform digests
+        run: |
+          AMD_DIGEST=$(docker buildx imagetools inspect nasanccs/satvision-pix4d:amd64 \
+            --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "amd64"}}{{.Digest}}{{end}}{{end}}')
+          ARM_DIGEST=$(docker buildx imagetools inspect nasanccs/satvision-pix4d:arm64 \
+            --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "arm64"}}{{.Digest}}{{end}}{{end}}')
+          echo "AMD_DIGEST=$AMD_DIGEST" >> $GITHUB_ENV
+          echo "ARM_DIGEST=$ARM_DIGEST" >> $GITHUB_ENV
       - name: Create and push manifest
         run: |
           docker manifest create nasanccs/satvision-pix4d:latest \
-            nasanccs/satvision-pix4d:amd64 \
-            nasanccs/satvision-pix4d:arm64
+            nasanccs/satvision-pix4d@${AMD_DIGEST} \
+            nasanccs/satvision-pix4d@${ARM_DIGEST}
           docker manifest push nasanccs/satvision-pix4d:latest
