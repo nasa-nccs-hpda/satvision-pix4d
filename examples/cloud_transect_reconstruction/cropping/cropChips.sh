@@ -9,4 +9,4 @@
 module load anaconda
 conda activate ilab-pytorch
 
-python3 cropChips.py $1 $2
+python3 cropChipsLarge.py $1 $2
