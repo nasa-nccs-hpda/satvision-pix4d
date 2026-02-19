@@ -23,7 +23,7 @@ ROOT_DIR = '/explore/nobackup/projects/pix4dcloud/szhang16/cloudsat/2B-CLDCLASS-
 #ABIDATA = "/css/geostationary/BackStage/GOES-16-ABI-L1B-FULLD/"
 ABIDATA = "/css/geostationary/NonOptimized/L1/GOES-16-ABI-L1B-FULLD/"  #BackStage is currently unavailable
 #SAVEDIR = '/explore/nobackup/projects/pix4dcloud/szhang16/abiChips/GOES-16-Redone/'
-SAVEDIR = '/explore/nobackup/projects/pix4dcloud/jli30/abiChips/GOES-16-p512/'
+SAVEDIR = '/explore/nobackup/projects/pix4dcloud/jli30/abiChips/GOES-16-p128/'
 # ===============================================
 
 
