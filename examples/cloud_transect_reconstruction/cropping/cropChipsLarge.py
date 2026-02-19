@@ -190,7 +190,8 @@ def get_L1B_L2(abipaths, l2path, YYYY, DDD, HH, ROOT):
 
 BOUND_SIZE = 1600
 LENGTH = 10848
-CHIP_HALF_SIZE = 256
+#CHIP_HALF_SIZE = 256
+CHIP_HALF_SIZE = 64  # Changed from 256 to make 128x128 chips
 
 f = nc.Dataset(LATLONDATA)
 abiLong = np.array(f['Longitude'])
@@ -346,7 +347,8 @@ def processFile(yy, ddn, orbit, latb):
     # Find corresponding ABI file to the UTC_Time
 
     i = 0
-    HALF_FOOTPRINTS = 182
+    #HALF_FOOTPRINTS = 182
+    HALF_FOOTPRINTS = 45  # Changed from 182 to make cross-section 4x shorter (91 total footprints)
     TOTAL_FOOTPRINTS = 2 * HALF_FOOTPRINTS + 1
 
     while i < N:
