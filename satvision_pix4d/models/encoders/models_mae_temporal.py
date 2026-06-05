@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
 from timm.models.vision_transformer import PatchEmbed, Block
-from flash_attn.modules.mha import MHA
+
+try:
+    from flash_attn.modules.mha import MHA
+except ImportError:
+    MHA = None
 
 # These must be in your environment
 from satvision_pix4d.models.utils.pos_embed import (
@@ -135,6 +139,38 @@ class MaskedAutoencoderViT(nn.Module):
         mask = torch.gather(mask, dim=1, index=ids_restore)
         return x_masked, mask, ids_restore
 
+    def same_spatial_masking(self, x, mask_ratio, num_timesteps, patches_per_timestep):
+        N, L, D = x.shape
+        len_keep_spatial = int(patches_per_timestep * (1 - mask_ratio))
+        noise = torch.rand(N, patches_per_timestep, device=x.device)
+        ids_spatial = torch.argsort(noise, dim=1)
+
+        time_offsets = (
+            torch.arange(num_timesteps, device=x.device)
+            .view(1, num_timesteps, 1)
+            .mul(patches_per_timestep)
+        )
+        ids_keep = (
+            ids_spatial[:, :len_keep_spatial]
+            .unsqueeze(1)
+            .add(time_offsets)
+            .reshape(N, -1)
+        )
+        ids_remove = (
+            ids_spatial[:, len_keep_spatial:]
+            .unsqueeze(1)
+            .add(time_offsets)
+            .reshape(N, -1)
+        )
+        ids_shuffle = torch.cat([ids_keep, ids_remove], dim=1)
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D))
+        mask = torch.ones([N, L], device=x.device)
+        mask[:, :ids_keep.shape[1]] = 0
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+        return x_masked, mask, ids_restore
+
     def _compute_temporal_embedding(self, timestamps_flat, embed_dim_per_component):
         ts_embed_list = [
             get_1d_sincos_pos_embed_from_grid_torch(embed_dim_per_component, timestamps_flat[:, k].float())
@@ -176,7 +212,10 @@ class MaskedAutoencoderViT(nn.Module):
         # Cast to consistent dtype
         x = x.to(self.cls_token.dtype)
 
-        x, mask, ids_restore = self.random_masking(x, mask_ratio, mask=mask)
+        if self.same_mask and mask is None:
+            x, mask, ids_restore = self.same_spatial_masking(x, mask_ratio, T, L_per_step)
+        else:
+            x, mask, ids_restore = self.random_masking(x, mask_ratio, mask=mask)
         cls_token = self.cls_token.expand(B, -1, -1)
         x = torch.cat([cls_token, x], dim=1)
 
@@ -270,6 +309,11 @@ from satvision_pix4d.models.utils.pos_embed import (
 class FlashMHAWrapper(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout, causal):
         super().__init__()
+        if MHA is None:
+            raise ImportError(
+                "flash_attn is not installed. Use the default timm attention "
+                "blocks or install flash-attn in the training environment."
+            )
         self.attn = MHA(embed_dim, num_heads=num_heads, dropout=dropout, causal=causal)
 
     def forward(self, x, attn_mask=None):
