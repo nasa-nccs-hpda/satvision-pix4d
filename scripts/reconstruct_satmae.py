@@ -39,7 +39,13 @@ def parse_args():
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--mask-ratio", type=float, default=None, help="Override config.DATA.MASK_RATIO.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--save-visualizations", type=int, default=0, help="Number of samples to render as PNG grids.")
+    parser.add_argument("--save-visualizations", type=int, default=5, help="Number of samples to render as PNG grids.")
+    parser.add_argument(
+        "--save-reconstruction-arrays",
+        type=int,
+        default=None,
+        help="Number of samples to save as .npz arrays. Defaults to --save-visualizations.",
+    )
     parser.add_argument("--viz-bands", type=int, nargs="+", default=[0, 1, 2, 6, 10, 13, 15])
     parser.add_argument("--viz-timestep", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
@@ -119,6 +125,33 @@ def reconstruct_batch(model, samples_z, timestamps, mask_ratio):
     return loss, recon_z, pred_only_z, pixel_mask
 
 
+def global_ssim(pred, target, data_range, mask=None):
+    # pred/target: (N,1,H,W), mask: optional (N,1,H,W). This is a masked/global
+    # SSIM variant, not a windowed SSIM implementation.
+    pred = pred.float()
+    target = target.float()
+    if mask is None:
+        weight = torch.ones_like(pred)
+    else:
+        weight = mask.float().expand_as(pred)
+
+    count = weight.sum(dim=(1, 2, 3)).clamp_min(1.0)
+    pred_mean = (pred * weight).sum(dim=(1, 2, 3)) / count
+    target_mean = (target * weight).sum(dim=(1, 2, 3)) / count
+
+    pred_centered = pred - pred_mean.view(-1, 1, 1, 1)
+    target_centered = target - target_mean.view(-1, 1, 1, 1)
+    pred_var = (pred_centered.square() * weight).sum(dim=(1, 2, 3)) / count
+    target_var = (target_centered.square() * weight).sum(dim=(1, 2, 3)) / count
+    covariance = (pred_centered * target_centered * weight).sum(dim=(1, 2, 3)) / count
+
+    c1 = (0.01 * data_range) ** 2
+    c2 = (0.03 * data_range) ** 2
+    numerator = (2 * pred_mean * target_mean + c1) * (2 * covariance + c2)
+    denominator = (pred_mean.square() + target_mean.square() + c1) * (pred_var + target_var + c2)
+    return numerator / denominator.clamp_min(1e-12)
+
+
 class BandAccumulator:
     def __init__(self, num_bands):
         self.num_bands = num_bands
@@ -126,24 +159,40 @@ class BandAccumulator:
         self.masked_sae = np.zeros(num_bands, dtype=np.float64)
         self.masked_sum_err = np.zeros(num_bands, dtype=np.float64)
         self.masked_count = np.zeros(num_bands, dtype=np.float64)
+        self.visible_sse = np.zeros(num_bands, dtype=np.float64)
+        self.visible_sae = np.zeros(num_bands, dtype=np.float64)
+        self.visible_sum_err = np.zeros(num_bands, dtype=np.float64)
+        self.visible_count = np.zeros(num_bands, dtype=np.float64)
         self.full_sse = np.zeros(num_bands, dtype=np.float64)
         self.full_sae = np.zeros(num_bands, dtype=np.float64)
         self.full_sum_err = np.zeros(num_bands, dtype=np.float64)
         self.full_count = np.zeros(num_bands, dtype=np.float64)
+        self.masked_ssim_sum = np.zeros(num_bands, dtype=np.float64)
+        self.visible_ssim_sum = np.zeros(num_bands, dtype=np.float64)
+        self.full_ssim_sum = np.zeros(num_bands, dtype=np.float64)
+        self.ssim_count = np.zeros(num_bands, dtype=np.float64)
         self.target_sum = np.zeros(num_bands, dtype=np.float64)
         self.pred_sum = np.zeros(num_bands, dtype=np.float64)
 
-    def update(self, pred, target, mask):
+    def update(self, pred, target, mask, data_range):
         # pred/target: (B,T,C,H,W), mask: (B,T,1,H,W)
         err = pred - target
         masked_err = err * mask
+        visible_mask = 1.0 - mask
+        visible_err = err * visible_mask
         count_masked = mask.sum(dim=(0, 1, 3, 4)).detach().cpu().numpy()
+        count_visible = visible_mask.sum(dim=(0, 1, 3, 4)).detach().cpu().numpy()
         count_full = np.prod([pred.shape[0], pred.shape[1], pred.shape[3], pred.shape[4]])
 
         self.masked_sse += (masked_err.square().sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
         self.masked_sae += (masked_err.abs().sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
         self.masked_sum_err += (masked_err.sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
         self.masked_count += count_masked
+
+        self.visible_sse += (visible_err.square().sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
+        self.visible_sae += (visible_err.abs().sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
+        self.visible_sum_err += (visible_err.sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
+        self.visible_count += count_visible
 
         self.full_sse += (err.square().sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
         self.full_sae += (err.abs().sum(dim=(0, 1, 3, 4))).detach().cpu().numpy()
@@ -152,12 +201,28 @@ class BandAccumulator:
         self.target_sum += target.sum(dim=(0, 1, 3, 4)).detach().cpu().numpy()
         self.pred_sum += pred.sum(dim=(0, 1, 3, 4)).detach().cpu().numpy()
 
+        b, t, c, h, w = pred.shape
+        flat_mask = mask.reshape(b * t, 1, h, w)
+        flat_visible_mask = visible_mask.reshape(b * t, 1, h, w)
+        for band in range(self.num_bands):
+            flat_pred = pred[:, :, band:band + 1].reshape(b * t, 1, h, w)
+            flat_target = target[:, :, band:band + 1].reshape(b * t, 1, h, w)
+            band_range = max(float(data_range[band]), 1e-6)
+            self.masked_ssim_sum[band] += global_ssim(flat_pred, flat_target, band_range, flat_mask).sum().item()
+            self.visible_ssim_sum[band] += global_ssim(
+                flat_pred, flat_target, band_range, flat_visible_mask
+            ).sum().item()
+            self.full_ssim_sum[band] += global_ssim(flat_pred, flat_target, band_range).sum().item()
+            self.ssim_count[band] += b * t
+
     def rows(self, data_range):
         rows = []
         for band in range(self.num_bands):
             masked_mse = self.masked_sse[band] / max(self.masked_count[band], 1.0)
+            visible_mse = self.visible_sse[band] / max(self.visible_count[band], 1.0)
             full_mse = self.full_sse[band] / max(self.full_count[band], 1.0)
             masked_rmse = math.sqrt(masked_mse)
+            visible_rmse = math.sqrt(visible_mse)
             full_rmse = math.sqrt(full_mse)
             band_range = max(float(data_range[band]), 1e-6)
             rows.append({
@@ -168,11 +233,20 @@ class BandAccumulator:
                 "masked_mae": self.masked_sae[band] / max(self.masked_count[band], 1.0),
                 "masked_bias": self.masked_sum_err[band] / max(self.masked_count[band], 1.0),
                 "masked_psnr": 10.0 * math.log10((band_range ** 2) / max(masked_mse, 1e-12)),
+                "masked_ssim": self.masked_ssim_sum[band] / max(self.ssim_count[band], 1.0),
+                "visible_count": int(self.visible_count[band]),
+                "visible_mse": visible_mse,
+                "visible_rmse": visible_rmse,
+                "visible_mae": self.visible_sae[band] / max(self.visible_count[band], 1.0),
+                "visible_bias": self.visible_sum_err[band] / max(self.visible_count[band], 1.0),
+                "visible_psnr": 10.0 * math.log10((band_range ** 2) / max(visible_mse, 1e-12)),
+                "visible_ssim": self.visible_ssim_sum[band] / max(self.ssim_count[band], 1.0),
                 "full_mse": full_mse,
                 "full_rmse": full_rmse,
                 "full_mae": self.full_sae[band] / max(self.full_count[band], 1.0),
                 "full_bias": self.full_sum_err[band] / max(self.full_count[band], 1.0),
                 "full_psnr": 10.0 * math.log10((band_range ** 2) / max(full_mse, 1e-12)),
+                "full_ssim": self.full_ssim_sum[band] / max(self.ssim_count[band], 1.0),
                 "target_mean": self.target_sum[band] / max(self.full_count[band], 1.0),
                 "prediction_mean": self.pred_sum[band] / max(self.full_count[band], 1.0),
             })
@@ -182,15 +256,23 @@ class BandAccumulator:
 def per_sample_rows(sample_ids, pred, target, mask, data_range):
     rows = []
     err = pred - target
-    b, _, c, _, _ = pred.shape
+    b, t, c, h, w = pred.shape
+    visible_mask = 1.0 - mask
     for i in range(b):
         for band in range(c):
             band_err = err[i:i + 1, :, band:band + 1]
             band_mask = mask[i:i + 1]
+            band_visible_mask = visible_mask[i:i + 1]
             masked_count = float(band_mask.sum().item())
+            visible_count = float(band_visible_mask.sum().item())
             masked_mse = float((band_err.square() * band_mask).sum().item() / max(masked_count, 1.0))
+            visible_mse = float((band_err.square() * band_visible_mask).sum().item() / max(visible_count, 1.0))
             full_mse = float(band_err.square().mean().item())
             band_range = max(float(data_range[band]), 1e-6)
+            flat_pred = pred[i:i + 1, :, band:band + 1].reshape(t, 1, h, w)
+            flat_target = target[i:i + 1, :, band:band + 1].reshape(t, 1, h, w)
+            flat_mask = band_mask.reshape(t, 1, h, w)
+            flat_visible_mask = band_visible_mask.reshape(t, 1, h, w)
             rows.append({
                 "sample": sample_ids[i],
                 "band": band,
@@ -199,10 +281,18 @@ def per_sample_rows(sample_ids, pred, target, mask, data_range):
                 "masked_rmse": math.sqrt(masked_mse),
                 "masked_mae": float((band_err.abs() * band_mask).sum().item() / max(masked_count, 1.0)),
                 "masked_psnr": 10.0 * math.log10((band_range ** 2) / max(masked_mse, 1e-12)),
+                "masked_ssim": float(global_ssim(flat_pred, flat_target, band_range, flat_mask).mean().item()),
+                "visible_count": int(visible_count),
+                "visible_mse": visible_mse,
+                "visible_rmse": math.sqrt(visible_mse),
+                "visible_mae": float((band_err.abs() * band_visible_mask).sum().item() / max(visible_count, 1.0)),
+                "visible_psnr": 10.0 * math.log10((band_range ** 2) / max(visible_mse, 1e-12)),
+                "visible_ssim": float(global_ssim(flat_pred, flat_target, band_range, flat_visible_mask).mean().item()),
                 "full_mse": full_mse,
                 "full_rmse": math.sqrt(full_mse),
                 "full_mae": float(band_err.abs().mean().item()),
                 "full_psnr": 10.0 * math.log10((band_range ** 2) / max(full_mse, 1e-12)),
+                "full_ssim": float(global_ssim(flat_pred, flat_target, band_range).mean().item()),
             })
     return rows
 
@@ -260,6 +350,17 @@ def save_visualization(path, target, masked_input, pred_only, recon, abs_err, ba
     plt.close(fig)
 
 
+def save_reconstruction_array(path, target, masked_input, pred_only, recon, mask):
+    np.savez_compressed(
+        path,
+        target=target.detach().cpu().numpy().astype(np.float32),
+        masked_input=masked_input.detach().cpu().numpy().astype(np.float32),
+        prediction_only=pred_only.detach().cpu().numpy().astype(np.float32),
+        merged_reconstruction=recon.detach().cpu().numpy().astype(np.float32),
+        mask=mask.detach().cpu().numpy().astype(np.uint8),
+    )
+
+
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -267,6 +368,11 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    reconstruction_array_count = (
+        args.save_visualizations if args.save_reconstruction_arrays is None else args.save_reconstruction_arrays
+    )
+    if args.save_visualizations == 0 and reconstruction_array_count == 0:
+        logging.warning("Both visualization and reconstruction array saving are disabled.")
 
     config = load_config(args.config)
     data_paths = args.data_dir if args.data_dir is not None else list(config.DATA.VAL_DATA_PATHS)
@@ -300,6 +406,8 @@ def main():
                 "mask_ratio": mask_ratio,
                 "device": str(device),
                 "batch_size": args.batch_size,
+                "save_visualizations": args.save_visualizations,
+                "save_reconstruction_arrays": reconstruction_array_count,
             },
             f,
             indent=2,
@@ -313,6 +421,7 @@ def main():
     sample_rows = []
     loss_values = []
     visualizations_saved = 0
+    reconstruction_arrays_saved = 0
     sample_offset = 0
 
     with torch.no_grad():
@@ -325,29 +434,43 @@ def main():
             recon_raw = inverse_standardize(recon_z, config, device)
             pred_only_raw = inverse_standardize(pred_only_z, config, device)
 
-            accumulator.update(recon_raw, samples_raw, pixel_mask)
+            accumulator.update(recon_raw, samples_raw, pixel_mask, data_range)
             sample_ids = list(range(sample_offset, sample_offset + samples_raw.shape[0]))
             sample_rows.extend(per_sample_rows(sample_ids, recon_raw, samples_raw, pixel_mask, data_range))
             loss_values.append(float(loss.item()))
 
-            while visualizations_saved < args.save_visualizations and visualizations_saved < samples_raw.shape[0] + sample_offset:
-                local_idx = visualizations_saved - sample_offset
-                if local_idx < 0 or local_idx >= samples_raw.shape[0]:
-                    break
+            batch_end = sample_offset + samples_raw.shape[0]
+            for global_idx in range(sample_offset, batch_end):
+                local_idx = global_idx - sample_offset
                 one_mask = pixel_mask[local_idx:local_idx + 1]
                 masked_input = samples_raw[local_idx:local_idx + 1] * (1.0 - one_mask)
-                abs_err = (recon_raw[local_idx:local_idx + 1] - samples_raw[local_idx:local_idx + 1]).abs() * one_mask
-                save_visualization(
-                    output_dir / f"reconstruction_sample_{visualizations_saved:04d}.png",
-                    samples_raw[local_idx:local_idx + 1],
-                    masked_input,
-                    pred_only_raw[local_idx:local_idx + 1],
-                    recon_raw[local_idx:local_idx + 1],
-                    abs_err,
-                    args.viz_bands,
-                    min(args.viz_timestep, samples_raw.shape[1] - 1),
-                )
-                visualizations_saved += 1
+
+                if reconstruction_arrays_saved < reconstruction_array_count:
+                    save_reconstruction_array(
+                        output_dir / f"reconstruction_sample_{global_idx:04d}.npz",
+                        samples_raw[local_idx:local_idx + 1],
+                        masked_input,
+                        pred_only_raw[local_idx:local_idx + 1],
+                        recon_raw[local_idx:local_idx + 1],
+                        one_mask,
+                    )
+                    reconstruction_arrays_saved += 1
+
+                if visualizations_saved < args.save_visualizations:
+                    abs_err = (
+                        recon_raw[local_idx:local_idx + 1] - samples_raw[local_idx:local_idx + 1]
+                    ).abs() * one_mask
+                    save_visualization(
+                        output_dir / f"reconstruction_sample_{global_idx:04d}.png",
+                        samples_raw[local_idx:local_idx + 1],
+                        masked_input,
+                        pred_only_raw[local_idx:local_idx + 1],
+                        recon_raw[local_idx:local_idx + 1],
+                        abs_err,
+                        args.viz_bands,
+                        min(args.viz_timestep, samples_raw.shape[1] - 1),
+                    )
+                    visualizations_saved += 1
 
             sample_offset += samples_raw.shape[0]
             logging.info("Processed batch %d/%d, loss=%.6f", batch_idx + 1, len(loader), loss.item())
@@ -362,8 +485,15 @@ def main():
         "mean_loss": float(np.mean(loss_values)) if loss_values else float("nan"),
         "mean_masked_mse": float(np.mean([row["masked_mse"] for row in band_rows])),
         "mean_masked_psnr": float(np.mean([row["masked_psnr"] for row in band_rows])),
+        "mean_masked_ssim": float(np.mean([row["masked_ssim"] for row in band_rows])),
+        "mean_visible_mse": float(np.mean([row["visible_mse"] for row in band_rows])),
+        "mean_visible_psnr": float(np.mean([row["visible_psnr"] for row in band_rows])),
+        "mean_visible_ssim": float(np.mean([row["visible_ssim"] for row in band_rows])),
         "mean_full_mse": float(np.mean([row["full_mse"] for row in band_rows])),
         "mean_full_psnr": float(np.mean([row["full_psnr"] for row in band_rows])),
+        "mean_full_ssim": float(np.mean([row["full_ssim"] for row in band_rows])),
+        "visualizations_saved": visualizations_saved,
+        "reconstruction_arrays_saved": reconstruction_arrays_saved,
     }
     write_csv(output_dir / "summary_metrics.csv", [summary])
     logging.info("Saved metrics to %s", output_dir)
