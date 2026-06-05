@@ -49,6 +49,11 @@ def parse_args():
     parser.add_argument("--viz-bands", type=int, nargs="+", default=[0, 1, 2, 6, 10, 13, 15])
     parser.add_argument("--viz-timestep", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--allow-partial-checkpoint",
+        action="store_true",
+        help="Allow missing/unexpected checkpoint keys instead of failing.",
+    )
     return parser.parse_args()
 
 
@@ -59,8 +64,10 @@ def load_config(path):
 
 
 def clean_state_dict(checkpoint):
+    lightning_state = False
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         state_dict = checkpoint["state_dict"]
+        lightning_state = True
     elif isinstance(checkpoint, dict) and "module" in checkpoint:
         state_dict = checkpoint["module"]
     else:
@@ -68,6 +75,10 @@ def clean_state_dict(checkpoint):
 
     cleaned = {}
     for key, value in state_dict.items():
+        if lightning_state and not (
+            key.startswith("model.") or key.startswith("module.model.")
+        ):
+            continue
         new_key = key
         for prefix in ("module.model.", "model.", "module."):
             if new_key.startswith(prefix):
@@ -76,7 +87,7 @@ def clean_state_dict(checkpoint):
     return cleaned
 
 
-def load_model(config, checkpoint_path, device):
+def load_model(config, checkpoint_path, device, allow_partial=False):
     model = build_satmae_model(config)
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = clean_state_dict(checkpoint)
@@ -86,6 +97,11 @@ def load_model(config, checkpoint_path, device):
         logging.info("First missing keys: %s", missing[:10])
     if unexpected:
         logging.info("First unexpected keys: %s", unexpected[:10])
+    if (missing or unexpected) and not allow_partial:
+        raise RuntimeError(
+            "Checkpoint did not exactly match the SatMAE model. "
+            "Rerun with --allow-partial-checkpoint only if this is intentional."
+        )
     model.to(device)
     model.eval()
     return model
@@ -407,7 +423,7 @@ def main():
         pin_memory=(device.type == "cuda"),
     )
 
-    model = load_model(config, args.checkpoint, device)
+    model = load_model(config, args.checkpoint, device, allow_partial=args.allow_partial_checkpoint)
     with open(output_dir / "run_manifest.json", "w") as f:
         json.dump(
             {

@@ -128,6 +128,9 @@ _C.MODEL.MAE_VIT.DECODER_DEPTH = 8
 _C.MODEL.MAE_VIT.DECODER_NUM_HEADS = 16
 _C.MODEL.MAE_VIT.SAME_MASK = False
 _C.MODEL.MAE_VIT.NORM_PIX_LOSS = False
+# Optional dense decoder supervision. Keep 0.0 for standard MAE; use >0 for
+# tiny overfit/debug runs where prediction-only reconstructions should sharpen.
+_C.MODEL.MAE_VIT.VISIBLE_LOSS_WEIGHT = 0.0
 
 # -----------------------------------------------------------------------------
 # Training settings

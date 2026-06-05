@@ -36,7 +36,8 @@ def build_satmae_model(config):
             mlp_ratio=config.MODEL.MAE_VIT.MLP_RATIO,
             norm_layer=partial(FP32LayerNorm, eps=1e-6),
             norm_pix_loss=config.MODEL.MAE_VIT.NORM_PIX_LOSS,
-            same_mask=config.MODEL.MAE_VIT.SAME_MASK
+            same_mask=config.MODEL.MAE_VIT.SAME_MASK,
+            visible_loss_weight=config.MODEL.MAE_VIT.VISIBLE_LOSS_WEIGHT,
         )
 
         logging.info(str(model))

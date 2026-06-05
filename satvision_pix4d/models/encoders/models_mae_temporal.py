@@ -299,7 +299,11 @@ class MaskedAutoencoderViT(nn.Module):
 import torch
 import torch.nn as nn
 from timm.models.vision_transformer import PatchEmbed, Block
-from flash_attn.modules.mha import MHA
+
+try:
+    from flash_attn.modules.mha import MHA
+except ImportError:
+    MHA = None
 
 from satvision_pix4d.models.utils.pos_embed import (
     get_2d_sincos_pos_embed,
@@ -340,6 +344,7 @@ class MaskedAutoencoderViT(nn.Module):
         n_time_components=3,          # e.g. ["year","month","hour"] -> 3
         enc_ts_dim_per_comp=128,      # matches your encoder setting
         dec_ts_dim_per_comp=64,       # matches your decoder setting
+        visible_loss_weight=0.0,
     ):
         super().__init__()
 
@@ -365,6 +370,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         self.norm_pix_loss = norm_pix_loss
         self.same_mask = same_mask
+        self.visible_loss_weight = visible_loss_weight
 
         # ---------- NEW: register temporal+spatial projection layers here ----------
         # Encoder projection maps [pos_embed || ts_embed] -> embed_dim
@@ -435,6 +441,37 @@ class MaskedAutoencoderViT(nn.Module):
         mask = torch.gather(mask, dim=1, index=ids_restore)
         return x_masked, mask, ids_restore
 
+    def same_spatial_masking(self, x, mask_ratio, num_timesteps, patches_per_timestep):
+        N, L, D = x.shape
+        len_keep_spatial = int(patches_per_timestep * (1 - mask_ratio))
+        noise = torch.rand(N, patches_per_timestep, device=x.device)
+        ids_spatial = torch.argsort(noise, dim=1)
+        time_offsets = (
+            torch.arange(num_timesteps, device=x.device)
+            .view(1, num_timesteps, 1)
+            .mul(patches_per_timestep)
+        )
+        ids_keep = (
+            ids_spatial[:, :len_keep_spatial]
+            .unsqueeze(1)
+            .add(time_offsets)
+            .reshape(N, -1)
+        )
+        ids_remove = (
+            ids_spatial[:, len_keep_spatial:]
+            .unsqueeze(1)
+            .add(time_offsets)
+            .reshape(N, -1)
+        )
+        ids_shuffle = torch.cat([ids_keep, ids_remove], dim=1)
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D))
+        mask = torch.ones([N, L], device=x.device)
+        mask[:, :ids_keep.shape[1]] = 0
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+        return x_masked, mask, ids_restore
+
     # ---------------- temporal embeddings ----------------
     def _compute_temporal_embedding(self, timestamps_flat, embed_dim_per_component):
         ts_embed_list = [
@@ -458,12 +495,18 @@ class MaskedAutoencoderViT(nn.Module):
             var  = target.var(dim=-1, keepdim=True)
             target = (target - mean) / (var + 1.0e-6).sqrt()
 
-        # MSE per token, then average over masked tokens only
+        # MSE per token, then average over masked tokens. Optionally add a
+        # visible-token term for tiny overfit/debug reconstruction runs.
         loss = (pred - target) ** 2                  # (B,L,p*p*C)
         loss = loss.mean(dim=-1)                     # (B,L)
-        denom = mask.sum().clamp_min(1)              # safety
-        loss = (loss * mask).sum() / denom
-        return loss
+        masked_denom = mask.sum().clamp_min(1)       # safety
+        masked_loss = (loss * mask).sum() / masked_denom
+        if self.visible_loss_weight <= 0:
+            return masked_loss
+
+        visible = 1.0 - mask
+        visible_loss = (loss * visible).sum() / visible.sum().clamp_min(1)
+        return masked_loss + self.visible_loss_weight * visible_loss
 
     def forward(self, imgs, timestamps, mask_ratio=0.75, mask=None):
         latent, mask, ids_restore = self.forward_encoder(imgs, timestamps, mask_ratio, mask)
@@ -510,7 +553,10 @@ class MaskedAutoencoderViT(nn.Module):
 
         # keep the rest as-is
         x = x.to(self.cls_token.dtype)
-        x, mask, ids_restore = self.random_masking(x, mask_ratio, mask=mask)
+        if self.same_mask and mask is None:
+            x, mask, ids_restore = self.same_spatial_masking(x, mask_ratio, T, L_per_step)
+        else:
+            x, mask, ids_restore = self.random_masking(x, mask_ratio, mask=mask)
         cls_token = self.cls_token.expand(B, -1, -1)
         x = torch.cat([cls_token, x], dim=1)
         for blk in self.blocks:
