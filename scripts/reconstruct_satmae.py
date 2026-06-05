@@ -107,7 +107,9 @@ def tokens_to_pixel_mask(model, mask_tokens, t, h, w):
     patch = int(model.patch_embed.patch_size[0])
     hp, wp = h // patch, w // patch
     mask = mask_tokens.view(mask_tokens.shape[0], t, hp, wp)
-    return mask.unsqueeze(2).repeat(1, 1, 1, patch, 1, patch).reshape(mask.shape[0], t, 1, h, w).float()
+    mask = mask.unsqueeze(2)
+    mask = mask.repeat_interleave(patch, dim=3).repeat_interleave(patch, dim=4)
+    return mask.float()
 
 
 def reconstruct_batch(model, samples_z, timestamps, mask_ratio):
@@ -115,14 +117,24 @@ def reconstruct_batch(model, samples_z, timestamps, mask_ratio):
     b, t, c, h, w = samples_z.shape
 
     gt_tokens = model.patchify(samples_z)
-    merged_tokens = gt_tokens.clone()
-    mask_expanded = mask_tokens.bool().unsqueeze(-1).expand_as(merged_tokens)
-    merged_tokens[mask_expanded] = pred_tokens[mask_expanded]
+    mask_expanded = mask_tokens.bool().unsqueeze(-1)
+    merged_tokens = torch.where(mask_expanded, pred_tokens, gt_tokens)
 
     recon_z = model.unpatchify(merged_tokens, t, h, w)
     pred_only_z = model.unpatchify(pred_tokens, t, h, w)
     pixel_mask = tokens_to_pixel_mask(model, mask_tokens, t, h, w)
     return loss, recon_z, pred_only_z, pixel_mask
+
+
+def visible_copy_error(recon, target, mask):
+    visible = 1.0 - mask
+    count = visible.sum().clamp_min(1.0)
+    err = (recon - target) * visible
+    return {
+        "visible_copy_mse": float((err.square().sum() / count).item()),
+        "visible_copy_mae": float((err.abs().sum() / count).item()),
+        "visible_copy_max_abs": float(err.abs().max().item()),
+    }
 
 
 def global_ssim(pred, target, data_range, mask=None):
@@ -420,6 +432,9 @@ def main():
     accumulator = BandAccumulator(num_bands)
     sample_rows = []
     loss_values = []
+    visible_copy_mse_values = []
+    visible_copy_mae_values = []
+    visible_copy_max_abs_values = []
     visualizations_saved = 0
     reconstruction_arrays_saved = 0
     sample_offset = 0
@@ -433,6 +448,16 @@ def main():
             loss, recon_z, pred_only_z, pixel_mask = reconstruct_batch(model, z, timestamps, mask_ratio)
             recon_raw = inverse_standardize(recon_z, config, device)
             pred_only_raw = inverse_standardize(pred_only_z, config, device)
+            copy_stats = visible_copy_error(recon_raw, samples_raw, pixel_mask)
+            visible_copy_mse_values.append(copy_stats["visible_copy_mse"])
+            visible_copy_mae_values.append(copy_stats["visible_copy_mae"])
+            visible_copy_max_abs_values.append(copy_stats["visible_copy_max_abs"])
+            if copy_stats["visible_copy_max_abs"] > 1e-4:
+                logging.warning(
+                    "Visible patch copy check is not near zero: mse=%.6g, max_abs=%.6g",
+                    copy_stats["visible_copy_mse"],
+                    copy_stats["visible_copy_max_abs"],
+                )
 
             accumulator.update(recon_raw, samples_raw, pixel_mask, data_range)
             sample_ids = list(range(sample_offset, sample_offset + samples_raw.shape[0]))
@@ -483,6 +508,9 @@ def main():
         "samples": len(dataset),
         "mask_ratio": mask_ratio,
         "mean_loss": float(np.mean(loss_values)) if loss_values else float("nan"),
+        "mean_visible_copy_mse": float(np.mean(visible_copy_mse_values)),
+        "mean_visible_copy_mae": float(np.mean(visible_copy_mae_values)),
+        "max_visible_copy_abs": float(np.max(visible_copy_max_abs_values)),
         "mean_masked_mse": float(np.mean([row["masked_mse"] for row in band_rows])),
         "mean_masked_psnr": float(np.mean([row["masked_psnr"] for row in band_rows])),
         "mean_masked_ssim": float(np.mean([row["masked_ssim"] for row in band_rows])),
