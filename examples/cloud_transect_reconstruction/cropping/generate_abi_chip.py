@@ -32,7 +32,7 @@ from typing import Dict, Tuple, Union, Optional
 LATLONDATA = "/explore/nobackup/projects/pix4dcloud/jgong/ABI_EAST_GEO_TOPO_LOMSK.nc"
 
 # Path to ABI L1b Full Disk data
-ABIDATA_ROOT = "/css/geostationary/NonOptimized/L1/GOES-16-ABI-L1B-FULLD/"
+ABIDATA_ROOT = "/css/geostationary/NonOptimized/L1/GOES-17-ABI-L1B-FULLD/"
 
 # Default output directory for generated chips
 OUTPUT_ROOT = "/explore/nobackup/projects/pix4dcloud/jli30/abiChips/exp/amv_p128"
