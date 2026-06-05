@@ -38,6 +38,9 @@ def build_satmae_model(config):
             norm_pix_loss=config.MODEL.MAE_VIT.NORM_PIX_LOSS,
             same_mask=config.MODEL.MAE_VIT.SAME_MASK,
             visible_loss_weight=config.MODEL.MAE_VIT.VISIBLE_LOSS_WEIGHT,
+            refine_pixels=config.MODEL.MAE_VIT.REFINE_PIXELS,
+            refinement_channels=config.MODEL.MAE_VIT.REFINEMENT_CHANNELS,
+            refinement_depth=config.MODEL.MAE_VIT.REFINEMENT_DEPTH,
         )
 
         logging.info(str(model))

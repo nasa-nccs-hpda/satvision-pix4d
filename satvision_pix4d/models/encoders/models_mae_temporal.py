@@ -324,6 +324,30 @@ class FlashMHAWrapper(nn.Module):
         x = x.to(self.attn.Wqkv.weight.dtype)
         return self.attn(x)
 
+
+class PixelRefinementHead(nn.Module):
+    def __init__(self, in_chans, hidden_chans=64, depth=3):
+        super().__init__()
+        layers = [
+            nn.Conv2d(in_chans + 1, hidden_chans, kernel_size=3, padding=1),
+            nn.GELU(),
+        ]
+        for _ in range(max(depth - 2, 0)):
+            layers.extend([
+                nn.Conv2d(hidden_chans, hidden_chans, kernel_size=3, padding=1),
+                nn.GELU(),
+            ])
+        layers.append(nn.Conv2d(hidden_chans, in_chans, kernel_size=3, padding=1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, merged_img, pixel_mask):
+        b, t, c, h, w = merged_img.shape
+        x = merged_img.reshape(b * t, c, h, w)
+        m = pixel_mask.reshape(b * t, 1, h, w).to(x.dtype)
+        residual = self.net(torch.cat([x, m], dim=1)).reshape(b, t, c, h, w)
+        return merged_img + residual * pixel_mask
+
+
 class MaskedAutoencoderViT(nn.Module):
     def __init__(
         self,
@@ -345,6 +369,9 @@ class MaskedAutoencoderViT(nn.Module):
         enc_ts_dim_per_comp=128,      # matches your encoder setting
         dec_ts_dim_per_comp=64,       # matches your decoder setting
         visible_loss_weight=0.0,
+        refine_pixels=False,
+        refinement_channels=64,
+        refinement_depth=3,
     ):
         super().__init__()
 
@@ -371,6 +398,7 @@ class MaskedAutoencoderViT(nn.Module):
         self.norm_pix_loss = norm_pix_loss
         self.same_mask = same_mask
         self.visible_loss_weight = visible_loss_weight
+        self.refine_pixels = refine_pixels
 
         # ---------- NEW: register temporal+spatial projection layers here ----------
         # Encoder projection maps [pos_embed || ts_embed] -> embed_dim
@@ -387,6 +415,10 @@ class MaskedAutoencoderViT(nn.Module):
         # Decoder projection maps [pos_embed || ts_embed] -> decoder_embed_dim
         self.decoder_temporal_spatial_proj = nn.Linear(
             decoder_embed_dim + n_time_components * dec_ts_dim_per_comp, decoder_embed_dim
+        )
+        self.pixel_refinement = (
+            PixelRefinementHead(in_chans, refinement_channels, refinement_depth)
+            if refine_pixels else None
         )
         # --------------------------------------------------------------------------
 
@@ -426,6 +458,14 @@ class MaskedAutoencoderViT(nn.Module):
         C = x.shape[-1] // (p * p)
         x = x.reshape(B, T, h, w, p, p, C).permute(0, 1, 6, 2, 4, 3, 5).reshape(B, T, C, H, W)
         return x
+
+    def tokens_to_pixel_mask(self, mask_tokens, T, H, W):
+        p = self.patch_embed.patch_size[0]
+        B = mask_tokens.shape[0]
+        h = H // p
+        w = W // p
+        mask = mask_tokens.view(B, T, h, w).unsqueeze(2)
+        return mask.repeat_interleave(p, dim=3).repeat_interleave(p, dim=4).float()
 
     # ---------------- masking ----------------
     def random_masking(self, x, mask_ratio, mask=None):
@@ -508,9 +548,22 @@ class MaskedAutoencoderViT(nn.Module):
         visible_loss = (loss * visible).sum() / visible.sum().clamp_min(1)
         return masked_loss + self.visible_loss_weight * visible_loss
 
+    def refine_prediction_tokens(self, imgs, pred, mask):
+        if self.pixel_refinement is None:
+            return pred
+
+        B, T, C, H, W = imgs.shape
+        target_tokens = self.patchify(imgs).to(pred.dtype)
+        merged_tokens = torch.where(mask.bool().unsqueeze(-1), pred, target_tokens)
+        merged_img = self.unpatchify(merged_tokens, T, H, W)
+        pixel_mask = self.tokens_to_pixel_mask(mask, T, H, W).to(merged_img.dtype)
+        refined_img = self.pixel_refinement(merged_img, pixel_mask)
+        return self.patchify(refined_img)
+
     def forward(self, imgs, timestamps, mask_ratio=0.75, mask=None):
         latent, mask, ids_restore = self.forward_encoder(imgs, timestamps, mask_ratio, mask)
         pred = self.forward_decoder(latent, timestamps, ids_restore)
+        pred = self.refine_prediction_tokens(imgs, pred, mask)
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 
