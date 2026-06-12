@@ -210,6 +210,8 @@ longSlice = abiLong[5424, :]
 longSlice = longSlice[18:-18]
 latSlice = latSlice[::-1]
 
+# %%
+
 
 def interpArray(Temperature, EC_height):
     z_grid = np.arange(40) * 0.5
@@ -228,6 +230,7 @@ def interpArray(Temperature, EC_height):
 
     return Temperature_grid
 
+# %%
 
 def is_leap_year(year):
     year = int(year)
