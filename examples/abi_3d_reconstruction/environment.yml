@@ -1,0 +1,16 @@
+name: cropTest
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - rclone
+  - numpy[version='<2.0']
+  - pyhdf
+  - netcdf4
+  - gdown
+  - matplotlib
+  - git
+  - jupyter
+  - scipy
+  - nodejs=20
+prefix: /home/al8425b-hpc/miniconda3/envs/cropTest
