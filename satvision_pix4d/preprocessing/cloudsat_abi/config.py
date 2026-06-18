@@ -78,6 +78,8 @@ class CropConfig:
     max_scan_delta_minutes: float = 8.0
     min_valid_fraction: float = 1.0
     inner_disk_margin: int = 1600
+    min_cloudsat_valid_fraction: float = 1.0
+    require_cloud: bool = False
     allow_missing_timesteps: bool = False
     overwrite: bool = False
     max_chips: int | None = None
@@ -101,6 +103,8 @@ class CropConfig:
             raise ValueError("min_valid_fraction must be in (0, 1]")
         if self.inner_disk_margin < 0:
             raise ValueError("inner_disk_margin cannot be negative")
+        if not 0 <= self.min_cloudsat_valid_fraction <= 1:
+            raise ValueError("min_cloudsat_valid_fraction must be in [0, 1]")
         if "merra2" in self.metadata and self.merra2_root is None:
             raise ValueError("merra2_root is required when MERRA-2 metadata is enabled")
         unknown = self.metadata - {"cloudsat", "merra2"}
