@@ -71,10 +71,13 @@ class CropConfig:
     chip_size: int = 128
     profile_stride: int = 45
     profiles_per_chip: int = 91
+    profile_selection: str = "fixed"
     metadata: frozenset[str] = frozenset({"cloudsat"})
     merra2_root: Path | None = None
     merra2_variables: tuple[str, ...] = ()
     max_scan_delta_minutes: float = 8.0
+    min_valid_fraction: float = 1.0
+    inner_disk_margin: int = 1600
     allow_missing_timesteps: bool = False
     overwrite: bool = False
     max_chips: int | None = None
@@ -86,10 +89,18 @@ class CropConfig:
             raise ValueError("profile_stride must be positive")
         if self.profiles_per_chip <= 0 or self.profiles_per_chip % 2 == 0:
             raise ValueError("profiles_per_chip must be a positive odd integer")
+        if self.profile_selection not in {"fixed", "chip"}:
+            raise ValueError("profile_selection must be 'fixed' or 'chip'")
+        if self.profile_selection == "chip" and "cloudsat" not in self.metadata:
+            raise ValueError("chip profile selection requires CloudSat metadata")
         if self.day_end is not None and self.day_end < self.day_start:
             raise ValueError("day_end must be greater than or equal to day_start")
         if not self.offsets:
             raise ValueError("at least one ABI offset is required")
+        if not 0 < self.min_valid_fraction <= 1:
+            raise ValueError("min_valid_fraction must be in (0, 1]")
+        if self.inner_disk_margin < 0:
+            raise ValueError("inner_disk_margin cannot be negative")
         if "merra2" in self.metadata and self.merra2_root is None:
             raise ValueError("merra2_root is required when MERRA-2 metadata is enabled")
         unknown = self.metadata - {"cloudsat", "merra2"}

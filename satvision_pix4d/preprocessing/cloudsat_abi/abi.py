@@ -114,6 +114,29 @@ class ABIGeometry:
         )
         return row_start + int(local_row), column_start + int(local_column)
 
+    def valid_fraction(self, row: int, column: int, size: int) -> float:
+        """Return the fraction of a chip covered by valid Earth coordinates."""
+        half = size // 2
+        row_start, row_stop = row - half, row + half
+        column_start, column_stop = column - half, column + half
+        if (
+            row_start < 0
+            or column_start < 0
+            or row_stop > self.valid.shape[0]
+            or column_stop > self.valid.shape[1]
+        ):
+            return 0.0
+        return float(
+            np.mean(self.valid[row_start:row_stop, column_start:column_stop])
+        )
+
+    def inside_inner_disk(self, row: int, column: int, margin: int) -> bool:
+        """Match the original conservative square inner-disk center bounds."""
+        return (
+            margin <= row <= self.latitude.shape[0] - margin
+            and margin <= column <= self.latitude.shape[1] - margin
+        )
+
     @staticmethod
     def _distance(
         latitudes: np.ndarray,
@@ -137,11 +160,15 @@ class ABIArchive:
         geometry: ABIGeometry,
         satellite: SatelliteSpec,
         max_delta_minutes: float = 8.0,
+        min_valid_fraction: float = 1.0,
+        inner_disk_margin: int = 1600,
     ):
         self.root = Path(root)
         self.geometry = geometry
         self.satellite = satellite
         self.max_delta = timedelta(minutes=max_delta_minutes)
+        self.min_valid_fraction = min_valid_fraction
+        self.inner_disk_margin = inner_disk_margin
         self._scan_cache: dict[
             tuple[int, int, int], dict[datetime, dict[int, Path]]
         ] = {}
@@ -210,6 +237,19 @@ class ABIArchive:
     def crop(
         self, requested: datetime, row: int, column: int, size: int
     ) -> tuple[np.ndarray, datetime]:
+        if not self.geometry.inside_inner_disk(
+            row, column, self.inner_disk_margin
+        ):
+            raise ValueError(
+                f"ABI center {(row, column)} is outside the inner disk "
+                f"margin of {self.inner_disk_margin} pixels"
+            )
+        valid_fraction = self.geometry.valid_fraction(row, column, size)
+        if valid_fraction < self.min_valid_fraction:
+            raise ValueError(
+                f"ABI chip is only {valid_fraction:.1%} on-disk; required "
+                f"{self.min_valid_fraction:.1%}"
+            )
         failures = []
         while True:
             try:
@@ -258,12 +298,19 @@ class ABIArchive:
                 raise ValueError(
                     f"Unsupported ABI channel resolution {variable.shape} in {path}"
                 )
-            native_row = int(round(row * scale))
-            native_column = int(round(column * scale))
-            native_half = max(1, int(round((size // 2) * scale)))
-            row_slice = slice(native_row - native_half, native_row + native_half)
+            common_row_start = row - size // 2
+            common_row_stop = row + size // 2
+            common_column_start = column - size // 2
+            common_column_stop = column + size // 2
+            native_rows = self._native_indices(
+                common_row_start, common_row_stop, scale
+            )
+            native_columns = self._native_indices(
+                common_column_start, common_column_stop, scale
+            )
+            row_slice = slice(int(native_rows[0]), int(native_rows[-1]) + 1)
             column_slice = slice(
-                native_column - native_half, native_column + native_half
+                int(native_columns[0]), int(native_columns[-1]) + 1
             )
             if (
                 row_slice.start < 0
@@ -278,11 +325,11 @@ class ABIArchive:
             if np.ma.isMaskedArray(raw):
                 raw = raw.filled(np.nan)
             chip = np.asarray(raw, dtype=np.float32)
+        row_index = native_rows - native_rows[0]
+        column_index = native_columns - native_columns[0]
+        return chip[np.ix_(row_index, column_index)]
 
-        if chip.shape != (size, size):
-            row_index = np.linspace(0, chip.shape[0] - 1, size).round().astype(int)
-            column_index = (
-                np.linspace(0, chip.shape[1] - 1, size).round().astype(int)
-            )
-            chip = chip[np.ix_(row_index, column_index)]
-        return chip
+    @staticmethod
+    def _native_indices(start: int, stop: int, scale: float) -> np.ndarray:
+        """Map common 1 km grid indices to native ABI pixels exactly."""
+        return np.floor(np.arange(start, stop) * scale).astype(int)

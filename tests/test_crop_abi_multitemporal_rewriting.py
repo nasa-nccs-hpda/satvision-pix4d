@@ -117,6 +117,24 @@ def test_geometry_nearest_uses_local_refinement():
     assert geometry.nearest(52.1, 37.2) == (52, 37)
 
 
+def test_geometry_retains_original_inner_disk_and_rejects_limb_chip():
+    geometry = ABIGeometry.__new__(ABIGeometry)
+    geometry.latitude = type("GridShape", (), {"shape": (10848, 10848)})()
+    geometry.valid = np.ones((10, 10), dtype=bool)
+    geometry.valid[3:7, 5:7] = False
+
+    assert geometry.inside_inner_disk(1600, 1600, 1600)
+    assert geometry.inside_inner_disk(9248, 9248, 1600)
+    assert not geometry.inside_inner_disk(10169, 8022, 1600)
+    assert geometry.valid_fraction(5, 5, 4) == 0.5
+
+
+def test_native_indices_match_original_one_km_resampling():
+    assert ABIArchive._native_indices(3, 7, 2.0).tolist() == [6, 8, 10, 12]
+    assert ABIArchive._native_indices(3, 7, 1.0).tolist() == [3, 4, 5, 6]
+    assert ABIArchive._native_indices(3, 7, 0.5).tolist() == [1, 2, 2, 3]
+
+
 def test_cloudsat_transect_owns_window_and_cloud_mask_logic(tmp_path):
     transect = make_transect(tmp_path)
 
@@ -135,6 +153,11 @@ def test_crop_config_validates_merra_and_normalizes_transect(tmp_path):
 
     with pytest.raises(ValueError, match="merra2_root"):
         make_config(tmp_path, metadata=frozenset({"merra2"}))
+
+    with pytest.raises(ValueError, match="requires CloudSat"):
+        make_config(
+            tmp_path, metadata=frozenset(), profile_selection="chip"
+        )
 
 
 def test_cli_builds_typed_satellite_configuration(tmp_path):
@@ -241,3 +264,37 @@ def test_pipeline_components_are_injectable_and_preserve_output_schema(tmp_path)
         metadata = str(data["metadata_json"])
         assert '"satellite":"GOES-18"' in metadata
         assert '"satellite_region":"west"' in metadata
+
+
+def test_chip_profile_selection_covers_top_to_bottom_in_abi_row_order(tmp_path):
+    transect = make_transect(tmp_path)
+    orbit_file = CloudSatOrbitFile(336, "72433", transect.source)
+
+    class TrackGeometry:
+        @staticmethod
+        def nearest(latitude, longitude):
+            return int(round(50 + latitude)), 50
+
+    class FakeABI:
+        geometry = TrackGeometry()
+
+        @staticmethod
+        def crop(requested, row, column, size):
+            return np.zeros((size, size, 16), dtype=np.float32), requested
+
+    config = make_config(tmp_path, profile_selection="chip")
+    pipeline = CloudSatABICollocationPipeline(
+        config,
+        abi_archive=FakeABI(),
+        cloudsat_reader=object(),
+        writer=NPZChipWriter(config.output_dir),
+    )
+
+    sample = pipeline.build_sample(orbit_file, transect, center=4)
+
+    assert sample.auxiliary_arrays["cloudsat_abi_row"].tolist() == list(
+        range(46, 54)
+    )
+    assert sample.auxiliary_arrays["cloudsat_profile_index"].tolist() == list(
+        range(8)
+    )
