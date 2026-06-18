@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -18,6 +19,12 @@ def require_netcdf4():
 
 def require_pyhdf():
     try:
+        import pyhdf
+
+        # HDF.vstart() dereferences pyhdf.VS at runtime. Some pyhdf releases do
+        # not import or expose that submodule when pyhdf.HDF is imported alone.
+        pyhdf.VS = importlib.import_module("pyhdf.VS")
+
         from pyhdf.HDF import HDF
         from pyhdf.SD import SD, SDC
     except ImportError as exc:

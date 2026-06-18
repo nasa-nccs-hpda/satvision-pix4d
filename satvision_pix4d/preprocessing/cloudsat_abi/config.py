@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
+from dataclasses import dataclass
+
+
+DEFAULT_GEOMETRY_DIR = Path(
+    "/explore/nobackup/projects/pix4dcloud/jgong"
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +27,13 @@ class SatelliteSpec:
     @property
     def filename_token(self) -> str:
         return self.name.replace("-", "")
+
+    @property
+    def geometry_filename(self) -> str:
+        return f"ABI_{self.region.upper()}_GEO_TOPO_LOMSK.nc"
+
+    def geometry_path(self, directory: Path = DEFAULT_GEOMETRY_DIR) -> Path:
+        return Path(directory) / self.geometry_filename
 
 
 SATELLITES = {
@@ -88,4 +100,3 @@ class CropConfig:
         if low < -90 or high > 90:
             raise ValueError("transect latitude bounds must be within [-90, 90]")
         object.__setattr__(self, "transect", (float(low), float(high)))
-

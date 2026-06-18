@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-import argparse
+import sys
 import logging
+import argparse
 from pathlib import Path
 from typing import Sequence
 
 from satvision_pix4d.preprocessing.cloudsat_abi import (
-    CloudSatABICollocationPipeline,
     CropConfig,
     get_satellite,
+    CloudSatABICollocationPipeline,
 )
-from satvision_pix4d.preprocessing.cloudsat_abi.config import SATELLITES
-
+from satvision_pix4d.preprocessing.cloudsat_abi.config import (
+    SATELLITES,
+    DEFAULT_GEOMETRY_DIR
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -29,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
   python scripts/crop_abi_multitemporal_rewriting.py \\
     --abi-root /data/GOES-16-ABI-L1B-FULLD \\
     --cloudsat-root /data/cloudsat \\
-    --latlon-path /data/ABI_EAST_GEO_TOPO_LOMSK.nc \\
+    --latlon-dir /data/geometry \\
     --output-dir /data/chips --year 2019 --day-start 335 --day-end 336 \\
     --transect -30 30 --satellite goes16 --metadata cloudsat merra2 \\
     --merra2-root /data/MERRA2 --merra2-variables T QV U V
@@ -48,8 +51,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Direct 2B-CLDCLASS-LIDAR path; defaults below --cloudsat-root",
     )
     parser.add_argument(
-        "--latlon-path", type=Path, required=True,
-        help="ABI East or West Latitude/Longitude NetCDF grid",
+        "--latlon-path", type=Path,
+        help=(
+            "Exact ABI Latitude/Longitude NetCDF file. Overrides "
+            "--latlon-dir."
+        ),
+    )
+    parser.add_argument(
+        "--latlon-dir", type=Path, default=DEFAULT_GEOMETRY_DIR,
+        help=(
+            "Directory containing ABI_EAST_GEO_TOPO_LOMSK.nc and/or "
+            "ABI_WEST_GEO_TOPO_LOMSK.nc. The file is selected from "
+            "--satellite."
+        ),
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--year", type=int, required=True)
@@ -58,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--orbit", help="Process only this five-digit CloudSat orbit")
     parser.add_argument(
         "--transect", type=float, nargs=2,
-        metavar=("LAT_MIN", "LAT_MAX"), required=True,
+        metavar=("LAT_MIN", "LAT_MAX"), required=False, default=(-90.0, 90.0),
         help="Inclusive CloudSat latitude bounds",
     )
     parser.add_argument(
@@ -96,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def config_from_args(args: argparse.Namespace) -> CropConfig:
+    satellite = get_satellite(args.satellite)
     index_root = (
         args.cloudsat_index_root
         or args.cloudsat_root / "2B-CLDCLASS-LIDAR"
@@ -104,10 +119,14 @@ def config_from_args(args: argparse.Namespace) -> CropConfig:
         abi_root=args.abi_root,
         cloudsat_root=args.cloudsat_root,
         cloudsat_index_root=index_root,
-        latlon_path=args.latlon_path,
+        latlon_path=(
+            args.latlon_path
+            if args.latlon_path is not None
+            else satellite.geometry_path(args.latlon_dir)
+        ),
         output_dir=args.output_dir,
         year=args.year,
-        satellite=get_satellite(args.satellite),
+        satellite=satellite,
         day_start=args.day_start,
         day_end=args.day_end,
         orbit=args.orbit,
@@ -133,11 +152,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(message)s",
     )
+
     try:
         config = config_from_args(args)
-        written = CloudSatABICollocationPipeline(config).run()
+        pipeline = CloudSatABICollocationPipeline(config)
+        pipeline.run()
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         LOG.error("%s", exc)
         return 1
-    LOG.info("Finished: %d chip(s) written", written)
-    return 0
+    #LOG.info("Finished: %d chip(s) written", pipeline)
+    return
+
+
+if __name__ == "__main__":
+    sys.exit(main())

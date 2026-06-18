@@ -154,13 +154,19 @@ class CloudSatReader:
             hdf.close()
 
         low, high = latitude_bounds
+
+        profile_count = len(arrays["latitude"])
+        profile_time = self._as_profile_array(
+            arrays.pop("profile_time"), profile_count, "Profile_time"
+        )
+        utc_start = self._as_profile_array(
+            arrays.pop("utc_start"), profile_count, "UTC_start"
+        )
+
         indices = np.flatnonzero(
             (arrays["latitude"] >= low) & (arrays["latitude"] <= high)
         )
-        utc_hour = (
-            arrays.pop("utc_start")[indices]
-            + arrays.pop("profile_time")[indices]
-        ) / 3600.0
+        utc_hour = (utc_start[indices] + profile_time[indices]) / 3600.0
         selected = {name: value[indices] for name, value in arrays.items()}
         return CloudSatTransect(source=Path(path), utc_hour=utc_hour, **selected)
 
@@ -171,3 +177,18 @@ class CloudSatReader:
             return np.squeeze(np.asarray(handle[:]))
         finally:
             handle.detach()
+
+    @staticmethod
+    def _as_profile_array(
+        value: np.ndarray, profile_count: int, field_name: str
+    ) -> np.ndarray:
+        """Broadcast scalar orbit metadata or validate profile-length fields."""
+        array = np.asarray(value)
+        if array.ndim == 0 or array.size == 1:
+            return np.full(profile_count, array.reshape(-1)[0])
+        if array.shape[0] != profile_count:
+            raise ValueError(
+                f"CloudSat {field_name} has {array.shape[0]} values for "
+                f"{profile_count} profiles"
+            )
+        return array
