@@ -156,6 +156,48 @@ def test_cli_builds_typed_satellite_configuration(tmp_path):
     assert config.metadata == frozenset()
 
 
+@pytest.mark.parametrize(
+    ("satellite", "filename"),
+    [
+        ("goes16", "ABI_EAST_GEO_TOPO_LOMSK.nc"),
+        ("goes18", "ABI_WEST_GEO_TOPO_LOMSK.nc"),
+        ("goes19", "ABI_EAST_GEO_TOPO_LOMSK.nc"),
+    ],
+)
+def test_cli_infers_geometry_file_from_satellite(tmp_path, satellite, filename):
+    parser = build_parser()
+    args = parser.parse_args([
+        "--abi-root", str(tmp_path / "abi"),
+        "--cloudsat-root", str(tmp_path / "cloudsat"),
+        "--latlon-dir", str(tmp_path / "geometry"),
+        "--output-dir", str(tmp_path / "output"),
+        "--year", "2019",
+        "--transect", "-30", "30",
+        "--satellite", satellite,
+    ])
+
+    config = config_from_args(args)
+
+    assert config.latlon_path == tmp_path / "geometry" / filename
+
+
+def test_explicit_geometry_file_overrides_directory_inference(tmp_path):
+    parser = build_parser()
+    override = tmp_path / "custom-grid.nc"
+    args = parser.parse_args([
+        "--abi-root", str(tmp_path / "abi"),
+        "--cloudsat-root", str(tmp_path / "cloudsat"),
+        "--latlon-dir", str(tmp_path / "geometry"),
+        "--latlon-path", str(override),
+        "--output-dir", str(tmp_path / "output"),
+        "--year", "2019",
+        "--transect", "-30", "30",
+        "--satellite", "goes18",
+    ])
+
+    assert config_from_args(args).latlon_path == override
+
+
 def test_pipeline_components_are_injectable_and_preserve_output_schema(tmp_path):
     transect = make_transect(tmp_path)
     orbit_file = CloudSatOrbitFile(336, "72433", transect.source)

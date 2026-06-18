@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -17,6 +18,8 @@ from satvision_pix4d.preprocessing.cloudsat_abi.utils import (
     require_netcdf4,
 )
 
+
+LOG = logging.getLogger(__name__)
 
 ABI_FILENAME_RE = re.compile(
     r"C(?P<channel>\d{2})_(?P<platform>G\d{2})_s"
@@ -142,6 +145,7 @@ class ABIArchive:
         self._scan_cache: dict[
             tuple[int, int, int], dict[datetime, dict[int, Path]]
         ] = {}
+        self._unreadable_scans: set[datetime] = set()
 
     def scans_for_hour(self, when: datetime) -> dict[datetime, dict[int, Path]]:
         key = (when.year, int(when.strftime("%j")), when.hour)
@@ -161,6 +165,12 @@ class ABIArchive:
         return result
 
     def nearest_scan(self, requested: datetime) -> tuple[datetime, dict[int, Path]]:
+        return self.candidate_scans(requested)[0]
+
+    def candidate_scans(
+        self, requested: datetime
+    ) -> list[tuple[datetime, dict[int, Path]]]:
+        """Return complete readable-candidate scans ordered by time distance."""
         candidates: dict[datetime, dict[int, Path]] = {}
         for hour_delta in (-1, 0, 1):
             candidates.update(
@@ -171,31 +181,68 @@ class ABIArchive:
             timestamp: files
             for timestamp, files in candidates.items()
             if required.issubset(files)
+            and timestamp not in self._unreadable_scans
         }
         if not complete:
             raise FileNotFoundError(
                 f"No complete 16-channel {self.satellite.name} ABI scan near "
                 f"{requested.isoformat()}"
             )
-        scan_time = min(complete, key=lambda value: abs(value - requested))
-        difference = abs(scan_time - requested)
-        if difference > self.max_delta:
+        ordered = sorted(complete, key=lambda value: abs(value - requested))
+        within_tolerance = [
+            timestamp
+            for timestamp in ordered
+            if abs(timestamp - requested) <= self.max_delta
+        ]
+        if not within_tolerance:
+            scan_time = ordered[0]
+            difference = abs(scan_time - requested)
             raise FileNotFoundError(
                 f"Nearest ABI scan is {difference.total_seconds() / 60:.1f} minutes "
                 f"from {requested.isoformat()} (limit "
                 f"{self.max_delta.total_seconds() / 60:g})"
             )
-        return scan_time, complete[scan_time]
+        return [
+            (timestamp, complete[timestamp])
+            for timestamp in within_tolerance
+        ]
 
     def crop(
         self, requested: datetime, row: int, column: int, size: int
     ) -> tuple[np.ndarray, datetime]:
-        scan_time, paths = self.nearest_scan(requested)
-        channels = [
-            self._crop_channel(paths[channel], row, column, size)
-            for channel in self.CHANNELS
-        ]
-        return np.stack(channels, axis=-1), scan_time
+        failures = []
+        while True:
+            try:
+                candidates = self.candidate_scans(requested)
+            except FileNotFoundError:
+                if failures:
+                    break
+                raise
+            scan_time, paths = candidates[0]
+            try:
+                channels = [
+                    self._crop_channel(paths[channel], row, column, size)
+                    for channel in self.CHANNELS
+                ]
+            except OSError as exc:
+                self._unreadable_scans.add(scan_time)
+                failures.append((scan_time, exc))
+                LOG.warning(
+                    "Quarantining unreadable ABI scan %s: %s",
+                    scan_time.isoformat(),
+                    exc,
+                )
+                continue
+            return np.stack(channels, axis=-1), scan_time
+
+        details = "; ".join(
+            f"{timestamp.isoformat()}: {error}"
+            for timestamp, error in failures
+        )
+        raise FileNotFoundError(
+            f"No readable complete ABI scan near {requested.isoformat()}"
+            + (f" ({details})" if details else "")
+        )
 
     def _crop_channel(
         self, path: Path, row: int, column: int, size: int
