@@ -72,6 +72,11 @@ class CloudSatTransect:
 
     def metadata_arrays(self, center: int, count: int) -> dict[str, np.ndarray]:
         indices = self.profile_window(center, count)
+        return self.metadata_arrays_for_indices(indices)
+
+    def metadata_arrays_for_indices(
+        self, indices: np.ndarray
+    ) -> dict[str, np.ndarray]:
         mask = self.cloud_mask()[indices]
         result = {
             "latitude": self.latitude[indices],

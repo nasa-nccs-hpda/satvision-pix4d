@@ -44,6 +44,8 @@ class CloudSatABICollocationPipeline:
                 geometry,
                 config.satellite,
                 config.max_scan_delta_minutes,
+                config.min_valid_fraction,
+                config.inner_disk_margin,
             )
         self.abi = abi_archive
         self.cloudsat = cloudsat_reader or CloudSatReader(
@@ -58,6 +60,7 @@ class CloudSatABICollocationPipeline:
         self.writer = writer or NPZChipWriter(
             config.output_dir, config.overwrite
         )
+        self._profile_pixel_cache: dict[tuple[str, int], tuple[int, int]] = {}
 
     def run(self) -> int:
         written = 0
@@ -76,7 +79,10 @@ class CloudSatABICollocationPipeline:
             transect = self.cloudsat.read(
                 orbit_file.path, self.config.transect
             )
-            if len(transect) < self.config.profiles_per_chip:
+            if (
+                self.config.profile_selection == "fixed"
+                and len(transect) < self.config.profiles_per_chip
+            ):
                 LOG.warning(
                     "Skipping orbit %s: only %d profiles in transect",
                     orbit_file.orbit,
@@ -110,6 +116,8 @@ class CloudSatABICollocationPipeline:
         return written
 
     def _profile_centers(self, transect: CloudSatTransect) -> range:
+        if self.config.profile_selection == "chip":
+            return range(0, len(transect), self.config.profile_stride)
         margin = self.config.profiles_per_chip // 2
         return range(
             margin,
@@ -130,6 +138,11 @@ class CloudSatABICollocationPipeline:
         center_longitude = float(transect.longitude[center])
         row, column = self.abi.geometry.nearest(
             center_latitude, center_longitude
+        )
+        valid_fraction = (
+            self.abi.geometry.valid_fraction(row, column, self.config.chip_size)
+            if hasattr(self.abi.geometry, "valid_fraction")
+            else 1.0
         )
         chips, scan_times, valid = [], [], []
         for offset in self.config.offsets:
@@ -171,14 +184,28 @@ class CloudSatABICollocationPipeline:
             center_longitude,
             row,
             column,
+            valid_fraction,
         )
         auxiliary: dict[str, np.ndarray] = {}
         if "cloudsat" in self.config.metadata:
-            auxiliary.update(
-                transect.metadata_arrays(
-                    center, self.config.profiles_per_chip
+            if self.config.profile_selection == "chip":
+                profile_indices, profile_rows, profile_columns = (
+                    self._chip_profile_positions(
+                        transect, center, row, column
+                    )
                 )
-            )
+                auxiliary.update(
+                    transect.metadata_arrays_for_indices(profile_indices)
+                )
+                auxiliary["cloudsat_abi_row"] = profile_rows
+                auxiliary["cloudsat_abi_column"] = profile_columns
+                auxiliary["cloudsat_profile_index"] = profile_indices
+            else:
+                auxiliary.update(
+                    transect.metadata_arrays(
+                        center, self.config.profiles_per_chip
+                    )
+                )
         if "merra2" in self.config.metadata:
             assert self.merra2 is not None
             values, sources = self.merra2.sample(
@@ -199,6 +226,85 @@ class CloudSatABICollocationPipeline:
             auxiliary_arrays=auxiliary,
         )
 
+    def _chip_profile_positions(
+        self,
+        transect: CloudSatTransect,
+        center: int,
+        center_row: int,
+        center_column: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return the contiguous CloudSat track crossing the chip vertically."""
+        half = self.config.chip_size // 2
+        row_min, row_max = center_row - half, center_row + half - 1
+        column_min = center_column - half
+        column_max = center_column + half - 1
+
+        positions: list[tuple[int, int, int]] = []
+        center_pixel = self._profile_pixel(transect, center)
+        if not self._inside_chip(
+            center_pixel, row_min, row_max, column_min, column_max
+        ):
+            raise ValueError("Center CloudSat profile is outside the ABI chip")
+        positions.append((center, *center_pixel))
+
+        for direction in (-1, 1):
+            index = center + direction
+            while 0 <= index < len(transect):
+                pixel = self._profile_pixel(transect, index)
+                if not self._inside_chip(
+                    pixel, row_min, row_max, column_min, column_max
+                ):
+                    break
+                positions.append((index, *pixel))
+                index += direction
+
+        positions.sort(key=lambda value: (value[1], value[2]))
+        indices = np.asarray([value[0] for value in positions], dtype=np.int32)
+        rows = np.asarray([value[1] for value in positions], dtype=np.int32)
+        columns = np.asarray([value[2] for value in positions], dtype=np.int32)
+        if len(rows) < 2:
+            raise ValueError("Too few CloudSat profiles cross the ABI chip")
+
+        row_steps = np.abs(np.diff(rows))
+        positive_steps = row_steps[row_steps > 0]
+        typical_step = (
+            float(np.median(positive_steps)) if len(positive_steps) else 1.0
+        )
+        edge_tolerance = max(2.0, 2.0 * typical_step)
+        if (
+            rows[0] - row_min > edge_tolerance
+            or row_max - rows[-1] > edge_tolerance
+        ):
+            raise ValueError(
+                "CloudSat track does not cross the ABI chip from top to bottom"
+            )
+        return indices, rows, columns
+
+    def _profile_pixel(
+        self, transect: CloudSatTransect, index: int
+    ) -> tuple[int, int]:
+        key = (str(transect.source), index)
+        if key not in self._profile_pixel_cache:
+            self._profile_pixel_cache[key] = self.abi.geometry.nearest(
+                float(transect.latitude[index]),
+                float(transect.longitude[index]),
+            )
+        return self._profile_pixel_cache[key]
+
+    @staticmethod
+    def _inside_chip(
+        pixel: tuple[int, int],
+        row_min: int,
+        row_max: int,
+        column_min: int,
+        column_max: int,
+    ) -> bool:
+        row, column = pixel
+        return (
+            row_min <= row <= row_max
+            and column_min <= column <= column_max
+        )
+
     def _metadata(
         self,
         orbit_file: CloudSatOrbitFile,
@@ -208,6 +314,7 @@ class CloudSatABICollocationPipeline:
         longitude: float,
         row: int,
         column: int,
+        valid_fraction: float,
     ) -> dict:
         return {
             "schema_version": 1,
@@ -220,6 +327,9 @@ class CloudSatABICollocationPipeline:
             "center_longitude": longitude,
             "abi_row": row,
             "abi_column": column,
+            "abi_valid_fraction": valid_fraction,
+            "abi_inner_disk_margin": self.config.inner_disk_margin,
+            "abi_common_grid_resolution_km": 1.0,
             "chip_size": self.config.chip_size,
             "transect_latitude_min": self.config.transect[0],
             "transect_latitude_max": self.config.transect[1],

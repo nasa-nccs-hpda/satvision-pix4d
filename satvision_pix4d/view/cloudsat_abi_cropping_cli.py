@@ -82,9 +82,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--offsets", type=int, nargs="+", default=[-40, -20, 0, 20, 40]
     )
-    parser.add_argument("--chip-size", type=int, default=128)
+    parser.add_argument(
+        "--chip-size", type=int, default=128,
+        help=(
+            "Chip width and height in common 1 km ABI-grid pixels. "
+            "Defaults to 128; use 512 for a 512x512 chip."
+        ),
+    )
     parser.add_argument("--profile-stride", type=int, default=45)
     parser.add_argument("--profiles-per-chip", type=int, default=91)
+    parser.add_argument(
+        "--profile-selection", choices=("fixed", "chip"), default="fixed",
+        help=(
+            "Use a fixed profile count, or select the CloudSat track crossing "
+            "the ABI chip from top to bottom."
+        ),
+    )
     parser.add_argument(
         "--metadata", nargs="*", choices=("cloudsat", "merra2"),
         default=["cloudsat"],
@@ -96,6 +109,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="MERRA-2 variables; empty means all gridded variables",
     )
     parser.add_argument("--max-scan-delta-minutes", type=float, default=8.0)
+    parser.add_argument(
+        "--min-valid-fraction", type=float, default=1.0,
+        help=(
+            "Minimum fraction of the chip with valid Earth geolocation. "
+            "Defaults to 1.0, rejecting limb-crossing chips."
+        ),
+    )
+    parser.add_argument(
+        "--inner-disk-margin", type=int, default=1600,
+        help=(
+            "Margin on the 10848-pixel common ABI grid. Defaults to 1600 "
+            "to match the original script; use 0 to disable."
+        ),
+    )
     parser.add_argument("--allow-missing-timesteps", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
@@ -135,10 +162,13 @@ def config_from_args(args: argparse.Namespace) -> CropConfig:
         chip_size=args.chip_size,
         profile_stride=args.profile_stride,
         profiles_per_chip=args.profiles_per_chip,
+        profile_selection=args.profile_selection,
         metadata=frozenset(args.metadata),
         merra2_root=args.merra2_root,
         merra2_variables=tuple(args.merra2_variables),
         max_scan_delta_minutes=args.max_scan_delta_minutes,
+        min_valid_fraction=args.min_valid_fraction,
+        inner_disk_margin=args.inner_disk_margin,
         allow_missing_timesteps=args.allow_missing_timesteps,
         overwrite=args.overwrite,
         max_chips=args.max_chips,
@@ -156,12 +186,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = config_from_args(args)
         pipeline = CloudSatABICollocationPipeline(config)
-        pipeline.run()
+        written = pipeline.run()
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         LOG.error("%s", exc)
         return 1
-    #LOG.info("Finished: %d chip(s) written", pipeline)
-    return
+    LOG.info("Finished: %d chip(s) written", written)
+    return 0
 
 
 if __name__ == "__main__":
