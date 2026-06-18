@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import timedelta
 
 import numpy as np
@@ -23,6 +24,10 @@ from satvision_pix4d.preprocessing.cloudsat_abi.writer import (
 
 
 LOG = logging.getLogger(__name__)
+
+
+class CloudSatLabelError(ValueError):
+    """A candidate lacks the requested valid CloudSat labels."""
 
 
 class CloudSatABICollocationPipeline:
@@ -89,7 +94,11 @@ class CloudSatABICollocationPipeline:
                     len(transect),
                 )
                 continue
-            for center in self._profile_centers(transect):
+            skipped = Counter()
+            orbit_written = 0
+            for candidate_number, center in enumerate(
+                self._profile_centers(transect), start=1
+            ):
                 if (
                     self.config.max_chips is not None
                     and written >= self.config.max_chips
@@ -104,16 +113,59 @@ class CloudSatABICollocationPipeline:
                     IndexError,
                     KeyError,
                 ) as exc:
-                    LOG.warning(
-                        "Skipping orbit %s profile %d: %s",
-                        orbit_file.orbit,
-                        center,
-                        exc,
-                    )
+                    reason = self._skip_reason(exc)
+                    skipped[reason] += 1
+                    if skipped[reason] <= 2:
+                        LOG.warning(
+                            "Skipping orbit %s profile %d [%s]: %s",
+                            orbit_file.orbit,
+                            center,
+                            reason,
+                            exc,
+                        )
+                    if candidate_number % 100 == 0:
+                        LOG.info(
+                            "Orbit %s progress: %d candidates, %d new, "
+                            "skipped=%s",
+                            orbit_file.orbit,
+                            candidate_number,
+                            orbit_written,
+                            dict(skipped),
+                        )
                     continue
                 written += int(created)
+                orbit_written += int(created)
                 LOG.info("%s %s", "Saved" if created else "Exists", output)
+                if candidate_number % 100 == 0:
+                    LOG.info(
+                        "Orbit %s progress: %d candidates, %d new, skipped=%s",
+                        orbit_file.orbit,
+                        candidate_number,
+                        orbit_written,
+                        dict(skipped),
+                    )
+            LOG.info(
+                "Finished orbit %s: %d new chip(s), skipped=%s",
+                orbit_file.orbit,
+                orbit_written,
+                dict(skipped),
+            )
         return written
+
+    @staticmethod
+    def _skip_reason(exc: Exception) -> str:
+        if isinstance(exc, CloudSatLabelError):
+            return "cloudsat_labels"
+        if isinstance(exc, FileNotFoundError):
+            return "abi_unavailable"
+        if isinstance(exc, IndexError):
+            return "profile_window"
+        message = str(exc).lower()
+        if "inner disk" in message or "on-disk" in message or "coverage" in message:
+            return "abi_geometry"
+        if "track" in message or "profiles cross" in message:
+            return "cloudsat_track"
+        return type(exc).__name__.lower()
 
     def _profile_centers(self, transect: CloudSatTransect) -> range:
         if self.config.profile_selection == "chip":
@@ -136,6 +188,14 @@ class CloudSatABICollocationPipeline:
         )
         center_latitude = float(transect.latitude[center])
         center_longitude = float(transect.longitude[center])
+        if (
+            "cloudsat" in self.config.metadata
+            and self.config.min_cloudsat_valid_fraction > 0
+            and not transect.profile_validity()[center]
+        ):
+            raise CloudSatLabelError(
+                "Center CloudSat profile has no valid retrieval"
+            )
         row, column = self.abi.geometry.nearest(
             center_latitude, center_longitude
         )
@@ -144,32 +204,6 @@ class CloudSatABICollocationPipeline:
             if hasattr(self.abi.geometry, "valid_fraction")
             else 1.0
         )
-        chips, scan_times, valid = [], [], []
-        for offset in self.config.offsets:
-            requested = center_time + timedelta(minutes=offset)
-            try:
-                chip, scan_time = self.abi.crop(
-                    requested, row, column, self.config.chip_size
-                )
-                valid.append(1)
-            except (FileNotFoundError, ValueError) as exc:
-                if not self.config.allow_missing_timesteps:
-                    raise
-                LOG.warning("Missing timestep %s: %s", requested.isoformat(), exc)
-                chip = np.full(
-                    (
-                        self.config.chip_size,
-                        self.config.chip_size,
-                        16,
-                    ),
-                    np.nan,
-                    dtype=np.float32,
-                )
-                scan_time = None
-                valid.append(0)
-            chips.append(chip)
-            scan_times.append(scan_time.isoformat() if scan_time else "")
-
         timestamp = center_time.strftime("%Y%m%dT%H%M%SZ")
         filename = (
             f"{self.config.satellite.filename_token}_"
@@ -200,6 +234,7 @@ class CloudSatABICollocationPipeline:
                 auxiliary["cloudsat_abi_row"] = profile_rows
                 auxiliary["cloudsat_abi_column"] = profile_columns
                 auxiliary["cloudsat_profile_index"] = profile_indices
+                self._validate_cloudsat_labels(auxiliary, metadata)
             else:
                 profile_indices = transect.profile_window(
                     center, self.config.profiles_per_chip
@@ -207,6 +242,7 @@ class CloudSatABICollocationPipeline:
                 auxiliary.update(
                     transect.metadata_arrays_for_indices(profile_indices)
                 )
+                self._validate_cloudsat_labels(auxiliary, metadata)
                 profile_pixels = np.asarray(
                     [
                         self._profile_pixel(transect, int(index))
@@ -219,7 +255,30 @@ class CloudSatABICollocationPipeline:
                 auxiliary["cloudsat_profile_index"] = profile_indices.astype(
                     np.int32
                 )
-            self._validate_cloudsat_labels(auxiliary, metadata)
+
+        # CloudSat eligibility is deliberately checked before expensive ABI I/O.
+        chips, scan_times, valid = [], [], []
+        for offset in self.config.offsets:
+            requested = center_time + timedelta(minutes=offset)
+            try:
+                chip, scan_time = self.abi.crop(
+                    requested, row, column, self.config.chip_size
+                )
+                valid.append(1)
+            except (FileNotFoundError, ValueError) as exc:
+                if not self.config.allow_missing_timesteps:
+                    raise
+                LOG.warning("Missing timestep %s: %s", requested.isoformat(), exc)
+                chip = np.full(
+                    (self.config.chip_size, self.config.chip_size, 16),
+                    np.nan,
+                    dtype=np.float32,
+                )
+                scan_time = None
+                valid.append(0)
+            chips.append(chip)
+            scan_times.append(scan_time.isoformat() if scan_time else "")
+
         if "merra2" in self.config.metadata:
             assert self.merra2 is not None
             values, sources = self.merra2.sample(
@@ -247,7 +306,7 @@ class CloudSatABICollocationPipeline:
         valid_fraction = float(np.mean(validity)) if len(validity) else 0.0
         metadata["cloudsat_valid_profile_fraction"] = valid_fraction
         if valid_fraction < self.config.min_cloudsat_valid_fraction:
-            raise ValueError(
+            raise CloudSatLabelError(
                 f"CloudSat labels are only {valid_fraction:.1%} valid; required "
                 f"{self.config.min_cloudsat_valid_fraction:.1%}"
             )
@@ -256,7 +315,9 @@ class CloudSatABICollocationPipeline:
         cloudy_fraction = float(np.mean(mask[mask >= 0] > 0)) if np.any(mask >= 0) else 0.0
         metadata["cloudsat_cloud_pixel_fraction"] = cloudy_fraction
         if self.config.require_cloud and not np.any(mask > 0):
-            raise ValueError("CloudSat segment is valid but contains no cloud")
+            raise CloudSatLabelError(
+                "CloudSat segment is valid but contains no cloud"
+            )
 
     def _chip_profile_positions(
         self,

@@ -18,6 +18,7 @@ from satvision_pix4d.preprocessing.cloudsat_abi.config import (
 )
 from satvision_pix4d.preprocessing.cloudsat_abi.pipeline import (
     CloudSatABICollocationPipeline,
+    CloudSatLabelError,
 )
 from satvision_pix4d.preprocessing.cloudsat_abi.writer import NPZChipWriter
 from satvision_pix4d.view.cloudsat_abi_cropping_cli import (
@@ -317,3 +318,32 @@ def test_chip_profile_selection_covers_top_to_bottom_in_abi_row_order(tmp_path):
     assert sample.auxiliary_arrays["cloudsat_profile_index"].tolist() == list(
         range(8)
     )
+
+
+def test_missing_cloudsat_center_is_rejected_before_abi_io(tmp_path):
+    transect = make_transect(tmp_path)
+    transect.cloud_layer_count[:] = -9
+    orbit_file = CloudSatOrbitFile(336, "72433", transect.source)
+
+    class FailIfUsedGeometry:
+        @staticmethod
+        def nearest(latitude, longitude):
+            raise AssertionError("ABI geometry should not be used")
+
+    class FailIfUsedABI:
+        geometry = FailIfUsedGeometry()
+
+        @staticmethod
+        def crop(requested, row, column, size):
+            raise AssertionError("ABI data should not be read")
+
+    config = make_config(tmp_path)
+    pipeline = CloudSatABICollocationPipeline(
+        config,
+        abi_archive=FailIfUsedABI(),
+        cloudsat_reader=object(),
+        writer=NPZChipWriter(config.output_dir),
+    )
+
+    with pytest.raises(CloudSatLabelError, match="no valid retrieval"):
+        pipeline.build_sample(orbit_file, transect, center=4)
