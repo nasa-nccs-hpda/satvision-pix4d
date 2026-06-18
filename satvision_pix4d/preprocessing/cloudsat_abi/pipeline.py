@@ -201,11 +201,25 @@ class CloudSatABICollocationPipeline:
                 auxiliary["cloudsat_abi_column"] = profile_columns
                 auxiliary["cloudsat_profile_index"] = profile_indices
             else:
-                auxiliary.update(
-                    transect.metadata_arrays(
-                        center, self.config.profiles_per_chip
-                    )
+                profile_indices = transect.profile_window(
+                    center, self.config.profiles_per_chip
                 )
+                auxiliary.update(
+                    transect.metadata_arrays_for_indices(profile_indices)
+                )
+                profile_pixels = np.asarray(
+                    [
+                        self._profile_pixel(transect, int(index))
+                        for index in profile_indices
+                    ],
+                    dtype=np.int32,
+                )
+                auxiliary["cloudsat_abi_row"] = profile_pixels[:, 0]
+                auxiliary["cloudsat_abi_column"] = profile_pixels[:, 1]
+                auxiliary["cloudsat_profile_index"] = profile_indices.astype(
+                    np.int32
+                )
+            self._validate_cloudsat_labels(auxiliary, metadata)
         if "merra2" in self.config.metadata:
             assert self.merra2 is not None
             values, sources = self.merra2.sample(
@@ -225,6 +239,24 @@ class CloudSatABICollocationPipeline:
             metadata=metadata,
             auxiliary_arrays=auxiliary,
         )
+
+    def _validate_cloudsat_labels(
+        self, arrays: dict[str, np.ndarray], metadata: dict
+    ) -> None:
+        validity = arrays["cloudsat_profile_valid"].astype(bool)
+        valid_fraction = float(np.mean(validity)) if len(validity) else 0.0
+        metadata["cloudsat_valid_profile_fraction"] = valid_fraction
+        if valid_fraction < self.config.min_cloudsat_valid_fraction:
+            raise ValueError(
+                f"CloudSat labels are only {valid_fraction:.1%} valid; required "
+                f"{self.config.min_cloudsat_valid_fraction:.1%}"
+            )
+
+        mask = arrays["cloudsat_cloud_mask"]
+        cloudy_fraction = float(np.mean(mask[mask >= 0] > 0)) if np.any(mask >= 0) else 0.0
+        metadata["cloudsat_cloud_pixel_fraction"] = cloudy_fraction
+        if self.config.require_cloud and not np.any(mask > 0):
+            raise ValueError("CloudSat segment is valid but contains no cloud")
 
     def _chip_profile_positions(
         self,

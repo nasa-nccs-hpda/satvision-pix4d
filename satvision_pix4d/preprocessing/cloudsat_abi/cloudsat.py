@@ -34,6 +34,7 @@ class CloudSatTransect:
     cloud_layer_base: np.ndarray
     cloud_layer_top: np.ndarray
     cloud_layer_type: np.ndarray
+    cloud_layer_count: np.ndarray
     _cached_cloud_mask: np.ndarray | None = field(
         default=None, init=False, repr=False
     )
@@ -55,9 +56,17 @@ class CloudSatTransect:
             and self._cached_cloud_mask is not None
         ):
             return self._cached_cloud_mask
-        mask = np.zeros((len(self), levels), dtype=np.int8)
+        valid_profiles = self.profile_validity()
+        mask = np.full((len(self), levels), -1, dtype=np.int8)
+        mask[valid_profiles] = 0
         for profile in range(len(self)):
-            for layer in range(self.cloud_layer_base.shape[1]):
+            if not valid_profiles[profile]:
+                continue
+            layer_count = min(
+                int(self.cloud_layer_count[profile]),
+                self.cloud_layer_base.shape[1],
+            )
+            for layer in range(layer_count):
                 base = self.cloud_layer_base[profile, layer]
                 if base < 0:
                     continue
@@ -69,6 +78,12 @@ class CloudSatTransect:
         if levels == 40 and resolution_km == 0.5:
             self._cached_cloud_mask = mask
         return mask
+
+    def profile_validity(self) -> np.ndarray:
+        """Distinguish valid clear profiles from fill-only retrievals."""
+        # Cloudlayer is 0 for valid clear profiles, positive for cloudy
+        # profiles, and -9 for missing retrievals.
+        return self.cloud_layer_count >= 0
 
     def metadata_arrays(self, center: int, count: int) -> dict[str, np.ndarray]:
         indices = self.profile_window(center, count)
@@ -86,8 +101,12 @@ class CloudSatTransect:
             "cloud_layer_base": self.cloud_layer_base[indices],
             "cloud_layer_top": self.cloud_layer_top[indices],
             "cloud_layer_type": self.cloud_layer_type[indices],
+            "cloud_layer_count": self.cloud_layer_count[indices],
             "cloud_mask": mask,
-            "cloud_mask_binary": (mask != 0).astype(np.int8),
+            "cloud_mask_binary": np.where(mask < 0, -1, mask != 0).astype(
+                np.int8
+            ),
+            "profile_valid": self.profile_validity()[indices].astype(np.int8),
         }
         return {f"cloudsat_{name}": value for name, value in result.items()}
 
@@ -153,6 +172,9 @@ class CloudSatReader:
                 longitude=self._read_vdata(vs, "Longitude"),
                 profile_time=self._read_vdata(vs, "Profile_time"),
                 utc_start=self._read_vdata(vs, "UTC_start"),
+                cloud_layer_count=self._read_first_vdata(
+                    vs, ("Cloudlayer", "CloudLayer")
+                ),
             )
         finally:
             vs.end()
@@ -182,6 +204,18 @@ class CloudSatReader:
             return np.squeeze(np.asarray(handle[:]))
         finally:
             handle.detach()
+
+    @classmethod
+    def _read_first_vdata(
+        cls, vs: Any, names: tuple[str, ...]
+    ) -> np.ndarray:
+        last_error = None
+        for name in names:
+            try:
+                return cls._read_vdata(vs, name)
+            except Exception as exc:
+                last_error = exc
+        raise KeyError(f"None of the CloudSat Vdata fields {names} exist") from last_error
 
     @staticmethod
     def _as_profile_array(

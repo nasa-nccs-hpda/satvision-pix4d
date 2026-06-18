@@ -67,6 +67,7 @@ def make_transect(tmp_path, profiles=9):
         cloud_layer_base=base,
         cloud_layer_top=top,
         cloud_layer_type=cloud_type,
+        cloud_layer_count=np.ones(profiles, dtype=np.int8),
     )
 
 
@@ -145,6 +146,21 @@ def test_cloudsat_transect_owns_window_and_cloud_mask_logic(tmp_path):
     assert arrays["cloudsat_cloud_mask"][0, 4:7].tolist() == [4, 4, 4]
     with pytest.raises(IndexError):
         transect.profile_window(center=1, count=5)
+
+
+def test_cloudsat_mask_distinguishes_clear_from_missing_profiles(tmp_path):
+    transect = make_transect(tmp_path, profiles=3)
+    transect.cloud_layer_count[:] = [1, 0, -9]
+    transect.cloud_layer_base[1:] = -99
+    transect.cloud_layer_top[1:] = -99
+    transect.cloud_layer_type[1:] = -9
+
+    mask = transect.cloud_mask()
+
+    assert np.any(mask[0] > 0)
+    assert np.all(mask[1] == 0)
+    assert np.all(mask[2] == -1)
+    assert transect.profile_validity().tolist() == [True, True, False]
 
 
 def test_crop_config_validates_merra_and_normalizes_transect(tmp_path):
@@ -261,6 +277,9 @@ def test_pipeline_components_are_injectable_and_preserve_output_schema(tmp_path)
     with np.load(outputs[0]) as data:
         assert data["chip"].shape == (3, 8, 8, 16)
         assert data["cloudsat_cloud_mask"].shape == (5, 40)
+        assert data["cloudsat_abi_row"].shape == (5,)
+        assert data["cloudsat_abi_column"].shape == (5,)
+        assert data["cloudsat_profile_index"].shape == (5,)
         metadata = str(data["metadata_json"])
         assert '"satellite":"GOES-18"' in metadata
         assert '"satellite_region":"west"' in metadata

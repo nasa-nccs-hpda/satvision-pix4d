@@ -123,6 +123,17 @@ def build_parser() -> argparse.ArgumentParser:
             "to match the original script; use 0 to disable."
         ),
     )
+    parser.add_argument(
+        "--min-cloudsat-valid-fraction", type=float, default=1.0,
+        help=(
+            "Minimum fraction of CloudSat profiles with valid retrievals. "
+            "Defaults to 1.0, excluding fill-only nighttime segments."
+        ),
+    )
+    parser.add_argument(
+        "--require-cloud", action="store_true",
+        help="Also skip valid CloudSat segments containing no classified cloud.",
+    )
     parser.add_argument("--allow-missing-timesteps", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
@@ -169,6 +180,8 @@ def config_from_args(args: argparse.Namespace) -> CropConfig:
         max_scan_delta_minutes=args.max_scan_delta_minutes,
         min_valid_fraction=args.min_valid_fraction,
         inner_disk_margin=args.inner_disk_margin,
+        min_cloudsat_valid_fraction=args.min_cloudsat_valid_fraction,
+        require_cloud=args.require_cloud,
         allow_missing_timesteps=args.allow_missing_timesteps,
         overwrite=args.overwrite,
         max_chips=args.max_chips,
