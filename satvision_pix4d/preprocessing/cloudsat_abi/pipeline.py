@@ -204,23 +204,8 @@ class CloudSatABICollocationPipeline:
             if hasattr(self.abi.geometry, "valid_fraction")
             else 1.0
         )
-        timestamp = center_time.strftime("%Y%m%dT%H%M%SZ")
-        filename = (
-            f"{self.config.satellite.filename_token}_"
-            f"{self.config.satellite.region}_abi_cloudsat_{timestamp}_"
-            f"orbit{orbit_file.orbit}_r{row}_c{column}_p{center}.npz"
-        )
-        metadata = self._metadata(
-            orbit_file,
-            center,
-            center_time.isoformat(),
-            center_latitude,
-            center_longitude,
-            row,
-            column,
-            valid_fraction,
-        )
         auxiliary: dict[str, np.ndarray] = {}
+        segment_len = 0
         if "cloudsat" in self.config.metadata:
             if self.config.profile_selection == "chip":
                 profile_indices, profile_rows, profile_columns = (
@@ -234,7 +219,6 @@ class CloudSatABICollocationPipeline:
                 auxiliary["cloudsat_abi_row"] = profile_rows
                 auxiliary["cloudsat_abi_column"] = profile_columns
                 auxiliary["cloudsat_profile_index"] = profile_indices
-                self._validate_cloudsat_labels(auxiliary, metadata)
             else:
                 profile_indices = transect.profile_window(
                     center, self.config.profiles_per_chip
@@ -242,7 +226,6 @@ class CloudSatABICollocationPipeline:
                 auxiliary.update(
                     transect.metadata_arrays_for_indices(profile_indices)
                 )
-                self._validate_cloudsat_labels(auxiliary, metadata)
                 profile_pixels = np.asarray(
                     [
                         self._profile_pixel(transect, int(index))
@@ -255,6 +238,27 @@ class CloudSatABICollocationPipeline:
                 auxiliary["cloudsat_profile_index"] = profile_indices.astype(
                     np.int32
                 )
+            segment_len = len(profile_indices)
+
+        timestamp = center_time.strftime("%Y%m%dT%H%M%SZ")
+        filename = (
+            f"{self.config.satellite.filename_token}_"
+            f"{self.config.satellite.region}_abi_cloudsat_{timestamp}_"
+            f"orbit{orbit_file.orbit}_r{row}_c{column}_p{center}_len{segment_len}.npz"
+        )
+        metadata = self._metadata(
+            orbit_file,
+            center,
+            center_time.isoformat(),
+            center_latitude,
+            center_longitude,
+            row,
+            column,
+            valid_fraction,
+        )
+
+        if "cloudsat" in self.config.metadata:
+            self._validate_cloudsat_labels(auxiliary, metadata)
 
         # CloudSat eligibility is deliberately checked before expensive ABI I/O.
         chips, scan_times, valid = [], [], []
