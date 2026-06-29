@@ -34,8 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     --cloudsat-root /data/cloudsat \\
     --latlon-dir /data/geometry \\
     --output-dir /data/chips --year 2019 --day-start 335 --day-end 336 \\
-    --transect -30 30 --satellite goes16 --metadata cloudsat merra2 \\
-    --merra2-root /data/MERRA2 --merra2-variables T QV U V
+    --transect -30 30 --satellite goes16 \\
+    --metadata cloudsat cloudsat_aux merra2 \\
+    --merra2-root /data/MERRA2 \\
+    --merra2-variables Pressure Temperature WV Geopotential_height Dem_elevation T2m U10m V10m
 """,
     )
     parser.add_argument(
@@ -99,14 +101,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--metadata", nargs="*", choices=("cloudsat", "merra2"),
+        "--metadata", nargs="*", choices=("cloudsat", "cloudsat_aux", "merra2"),
         default=["cloudsat"],
         help="Metadata groups to store; pass with no values for none",
+    )
+    parser.add_argument(
+        "--cloudsat-aux-root", type=Path,
+        help=(
+            "Direct ECMWF-AUX product path; defaults to "
+            "--cloudsat-root/ECMWF-AUX when --metadata includes cloudsat_aux."
+        ),
     )
     parser.add_argument("--merra2-root", type=Path)
     parser.add_argument(
         "--merra2-variables", nargs="*", default=[],
-        help="MERRA-2 variables; empty means all gridded variables",
+        help=(
+            "MERRA-2 outputs to save. Empty means all spreadsheet minimums: "
+            "Pressure, Temperature, WV, Geopotential_height, Dem_elevation, "
+            "T2m, U10m, V10m. Raw aliases like T, QV, H, T2M are accepted."
+        ),
     )
     parser.add_argument("--max-scan-delta-minutes", type=float, default=8.0)
     parser.add_argument(
@@ -182,6 +195,7 @@ def config_from_args(args: argparse.Namespace) -> CropConfig:
         profiles_per_chip=args.profiles_per_chip,
         profile_selection=args.profile_selection,
         metadata=frozenset(args.metadata),
+        cloudsat_aux_root=args.cloudsat_aux_root,
         merra2_root=args.merra2_root,
         merra2_variables=tuple(args.merra2_variables),
         max_scan_delta_minutes=args.max_scan_delta_minutes,

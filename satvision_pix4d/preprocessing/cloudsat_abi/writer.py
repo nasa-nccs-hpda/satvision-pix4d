@@ -24,17 +24,23 @@ class CollocatedChip:
 
     def arrays(self) -> dict[str, Any]:
         arrays: dict[str, Any] = {
-            "chip": self.chip,
-            "abi_offsets_minutes": self.offsets_minutes,
-            "abi_valid_mask": self.valid_mask,
-            "abi_scan_times": self.scan_times,
+            "ABI/chip": self.chip,
+            "ABI/offsets_minutes": self.offsets_minutes,
+            "ABI/valid_mask": self.valid_mask,
+            "ABI/scan_times": self.scan_times,
             "metadata_json": np.asarray(
                 json.dumps(
                     self.metadata, sort_keys=True, separators=(",", ":")
                 )
             ),
         }
-        arrays.update(self.auxiliary_arrays)
+        for name, value in self.auxiliary_arrays.items():
+            if name.startswith("cloudsat_"):
+                arrays[f"CloudSat/{name.removeprefix('cloudsat_')}"] = value
+            elif name.startswith("merra2_"):
+                arrays[f"MERRA2/{name.removeprefix('merra2_')}"] = value
+            else:
+                arrays[name] = value
         return arrays
 
 

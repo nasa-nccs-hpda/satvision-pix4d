@@ -13,6 +13,8 @@ import numpy as np
 
 from satvision_pix4d.preprocessing.cloudsat_abi.abi import ABIArchive, ABIGeometry
 from satvision_pix4d.preprocessing.cloudsat_abi.cloudsat import (
+    CloudSatAuxiliaryReader,
+    CloudSatAuxiliaryTransect,
     CloudSatOrbitFile,
     CloudSatReader,
     CloudSatTransect,
@@ -50,6 +52,7 @@ class CloudSatABICollocationPipeline:
         config: CropConfig,
         abi_archive: ABIArchive | None = None,
         cloudsat_reader: CloudSatReader | None = None,
+        cloudsat_aux_reader: CloudSatAuxiliaryReader | None = None,
         merra2_reader: MERRA2Reader | None = None,
         writer: NPZChipWriter | None = None,
     ):
@@ -68,6 +71,12 @@ class CloudSatABICollocationPipeline:
         self.cloudsat = cloudsat_reader or CloudSatReader(
             config.cloudsat_root, config.cloudsat_index_root
         )
+        self.cloudsat_aux = cloudsat_aux_reader
+        if "cloudsat_aux" in config.metadata and self.cloudsat_aux is None:
+            self.cloudsat_aux = CloudSatAuxiliaryReader(
+                config.cloudsat_aux_root
+                or config.cloudsat_root / "ECMWF-AUX"
+            )
         self.merra2 = merra2_reader
         if "merra2" in config.metadata and self.merra2 is None:
             assert config.merra2_root is not None
@@ -108,6 +117,35 @@ class CloudSatABICollocationPipeline:
             orbit_file.day,
         )
         transect = self.cloudsat.read(orbit_file.path, self.config.transect)
+        auxiliary_transect = None
+        if "cloudsat_aux" in self.config.metadata:
+            assert self.cloudsat_aux is not None
+            try:
+                auxiliary_path = self.cloudsat_aux.path_for_orbit(
+                    self.config.year, orbit_file.day, orbit_file.orbit
+                )
+                auxiliary_transect = self.cloudsat_aux.read(
+                    auxiliary_path, self.config.transect
+                )
+                if len(auxiliary_transect.latitude) != len(transect):
+                    raise ValueError(
+                        "CloudSat ECMWF-AUX transect length "
+                        f"{len(auxiliary_transect.latitude)} does not match "
+                        f"2B-CLDCLASS-LIDAR length {len(transect)}"
+                    )
+            except (FileNotFoundError, ValueError, KeyError) as exc:
+                LOG.warning(
+                    "Skipping orbit %s: CloudSat ECMWF-AUX unavailable: %s",
+                    orbit_file.orbit,
+                    exc,
+                )
+                return OrbitResult(
+                    orbit_file.day,
+                    orbit_file.orbit,
+                    0,
+                    0,
+                    {"cloudsat_aux": 1},
+                )
         if (
             self.config.profile_selection == "fixed"
             and len(transect) < self.config.profiles_per_chip
@@ -131,7 +169,9 @@ class CloudSatABICollocationPipeline:
             if max_new is not None and orbit_written >= max_new:
                 break
             try:
-                sample = self.build_sample(orbit_file, transect, center)
+                sample = self.build_sample(
+                    orbit_file, transect, center, auxiliary_transect
+                )
                 output, created = self.writer.write(sample)
             except (FileNotFoundError, ValueError, IndexError, KeyError) as exc:
                 reason = self._skip_reason(exc)
@@ -202,6 +242,7 @@ class CloudSatABICollocationPipeline:
         orbit_file: CloudSatOrbitFile,
         transect: CloudSatTransect,
         center: int,
+        auxiliary_transect: CloudSatAuxiliaryTransect | None = None,
     ) -> CollocatedChip:
         center_time = datetime_from_year_doy(
             self.config.year, orbit_file.day, transect.utc_hour[center]
@@ -259,6 +300,11 @@ class CloudSatABICollocationPipeline:
                     np.int32
                 )
             segment_len = len(profile_indices)
+            self._add_cloudsat_auxiliary(
+                auxiliary, metadata=None,
+                auxiliary_transect=auxiliary_transect,
+                profile_indices=profile_indices,
+            )
 
         timestamp = center_time.strftime("%Y%m%dT%H%M%SZ")
         filename = (
@@ -279,11 +325,24 @@ class CloudSatABICollocationPipeline:
 
         if "cloudsat" in self.config.metadata:
             self._validate_cloudsat_labels(auxiliary, metadata)
+        if "cloudsat_aux" in self.config.metadata:
+            if auxiliary_transect is None:
+                raise FileNotFoundError(
+                    "CloudSat ECMWF-AUX metadata was requested"
+                )
+            metadata["cloudsat_aux_source"] = str(auxiliary_transect.source)
+
+        chip_latitude, chip_longitude = None, None
+        if "merra2" in self.config.metadata:
+            chip_latitude, chip_longitude = self.abi.geometry.crop_latlon(
+                row, column, self.config.chip_size
+            )
 
         # CloudSat eligibility is deliberately checked before expensive ABI I/O.
-        chips, scan_times, valid = [], [], []
+        chips, scan_times, valid, requested_times = [], [], [], []
         for offset in self.config.offsets:
             requested = center_time + timedelta(minutes=offset)
+            requested_times.append(requested)
             try:
                 chip, scan_time = self.abi.crop(
                     requested, row, column, self.config.chip_size
@@ -305,8 +364,9 @@ class CloudSatABICollocationPipeline:
 
         if "merra2" in self.config.metadata:
             assert self.merra2 is not None
-            values, sources = self.merra2.sample(
-                center_time, center_latitude, center_longitude
+            assert chip_latitude is not None and chip_longitude is not None
+            values, sources = self.merra2.sample_chip(
+                requested_times, chip_latitude, chip_longitude
             )
             auxiliary.update(
                 {f"merra2_{name}": value for name, value in values.items()}
@@ -323,6 +383,21 @@ class CloudSatABICollocationPipeline:
             auxiliary_arrays=auxiliary,
         )
 
+    def _add_cloudsat_auxiliary(
+        self,
+        arrays: dict[str, np.ndarray],
+        metadata: dict | None,
+        auxiliary_transect: CloudSatAuxiliaryTransect | None,
+        profile_indices: np.ndarray,
+    ) -> None:
+        if "cloudsat_aux" not in self.config.metadata:
+            return
+        if auxiliary_transect is None:
+            raise FileNotFoundError("CloudSat ECMWF-AUX metadata was requested")
+        arrays.update(auxiliary_transect.metadata_arrays_for_indices(profile_indices))
+        if metadata is not None:
+            metadata["cloudsat_aux_source"] = str(auxiliary_transect.source)
+
     def _validate_cloudsat_labels(
         self, arrays: dict[str, np.ndarray], metadata: dict
     ) -> None:
@@ -335,7 +410,7 @@ class CloudSatABICollocationPipeline:
                 f"{self.config.min_cloudsat_valid_fraction:.1%}"
             )
 
-        mask = arrays["cloudsat_cloud_mask"]
+        mask = arrays["cloudsat_cloud_class"]
         cloudy_fraction = (
             float(np.mean(mask[mask >= 0] > 0))
             if np.any(mask >= 0)

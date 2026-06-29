@@ -73,6 +73,7 @@ class CropConfig:
     profiles_per_chip: int = 91
     profile_selection: str = "fixed"
     metadata: frozenset[str] = frozenset({"cloudsat"})
+    cloudsat_aux_root: Path | None = None
     merra2_root: Path | None = None
     merra2_variables: tuple[str, ...] = ()
     max_scan_delta_minutes: float = 8.0
@@ -95,6 +96,8 @@ class CropConfig:
             raise ValueError("profile_selection must be 'fixed' or 'chip'")
         if self.profile_selection == "chip" and "cloudsat" not in self.metadata:
             raise ValueError("chip profile selection requires CloudSat metadata")
+        if "cloudsat_aux" in self.metadata and "cloudsat" not in self.metadata:
+            raise ValueError("cloudsat_aux metadata requires CloudSat metadata")
         if self.day_end is not None and self.day_end < self.day_start:
             raise ValueError("day_end must be greater than or equal to day_start")
         if not self.offsets:
@@ -107,7 +110,7 @@ class CropConfig:
             raise ValueError("min_cloudsat_valid_fraction must be in [0, 1]")
         if "merra2" in self.metadata and self.merra2_root is None:
             raise ValueError("merra2_root is required when MERRA-2 metadata is enabled")
-        unknown = self.metadata - {"cloudsat", "merra2"}
+        unknown = self.metadata - {"cloudsat", "cloudsat_aux", "merra2"}
         if unknown:
             raise ValueError(f"Unsupported metadata groups: {sorted(unknown)}")
 
