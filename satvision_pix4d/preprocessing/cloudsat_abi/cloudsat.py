@@ -102,13 +102,60 @@ class CloudSatTransect:
             "cloud_layer_top": self.cloud_layer_top[indices],
             "cloud_layer_type": self.cloud_layer_type[indices],
             "cloud_layer_count": self.cloud_layer_count[indices],
-            "cloud_mask": mask,
-            "cloud_mask_binary": np.where(mask < 0, -1, mask != 0).astype(
+            "cloud_class": mask,
+            "cloud_binary_mask": np.where(mask < 0, -1, mask != 0).astype(
                 np.int8
             ),
             "profile_valid": self.profile_validity()[indices].astype(np.int8),
         }
         return {f"cloudsat_{name}": value for name, value in result.items()}
+
+
+@dataclass
+class CloudSatAuxiliaryTransect:
+    """CloudSat ECMWF-AUX profiles restricted to the same latitude transect."""
+
+    source: Path
+    pressure: np.ndarray
+    dem_elevation: np.ndarray
+    temperature: np.ndarray
+    specific_humidity: np.ndarray
+    ec_height: np.ndarray
+    temperature_2m: np.ndarray
+    skin_temperature: np.ndarray
+    surface_pressure: np.ndarray
+    u10_velocity: np.ndarray
+    v10_velocity: np.ndarray
+    utc_time: np.ndarray
+    latitude: np.ndarray
+    longitude: np.ndarray
+
+    def metadata_arrays_for_indices(
+        self, indices: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        result = {
+            "pressure": self.pressure[indices],
+            "dem_elevation": self.dem_elevation[indices],
+            "temperature": self.temperature[indices],
+            "specific_humidity": self.specific_humidity[indices],
+            "ec_height": self._ec_height_for_indices(indices),
+            "temperature_2m": self.temperature_2m[indices],
+            "skin_temperature": self.skin_temperature[indices],
+            "surface_pressure": self.surface_pressure[indices],
+            "u10_velocity": self.u10_velocity[indices],
+            "v10_velocity": self.v10_velocity[indices],
+            "aux_utc_time": self.utc_time[indices],
+            "aux_latitude": self.latitude[indices],
+            "aux_longitude": self.longitude[indices],
+        }
+        return {f"cloudsat_{name}": value for name, value in result.items()}
+
+    def _ec_height_for_indices(self, indices: np.ndarray) -> np.ndarray:
+        if self.ec_height.ndim == 1:
+            return np.broadcast_to(
+                self.ec_height, (len(indices), self.ec_height.shape[0])
+            ).copy()
+        return self.ec_height[indices]
 
 
 class CloudSatReader:
@@ -231,3 +278,147 @@ class CloudSatReader:
                 f"{profile_count} profiles"
             )
         return array
+
+
+class CloudSatAuxiliaryReader:
+    """Discover and read local CloudSat ECMWF-AUX products."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+
+    def path_for_orbit(self, year: int, day: int, orbit: str) -> Path:
+        day_root = self.root / str(year) / f"{day:03d}"
+        matches = sorted(
+            day_root.glob(
+                f"{year}{day:03d}*{orbit}*ECMWF-AUX*P1_R05*.hdf"
+            )
+        )
+        if not matches:
+            raise FileNotFoundError(
+                f"No ECMWF-AUX file found for orbit {orbit} in {day_root}"
+            )
+        return matches[0]
+
+    def read(
+        self, path: Path, latitude_bounds: tuple[float, float]
+    ) -> CloudSatAuxiliaryTransect:
+        HDF, SD, SDC = require_pyhdf()
+        sd = SD(str(path), SDC.READ)
+        try:
+            pressure = np.asarray(sd.select("Pressure")[:])
+            temperature = np.asarray(sd.select("Temperature")[:])
+            specific_humidity = np.asarray(sd.select("Specific_humidity")[:])
+        finally:
+            sd.end()
+
+        hdf = HDF(str(path), SDC.READ)
+        vs = hdf.vstart()
+        try:
+            ec_height = np.asarray(CloudSatReader._read_vdata(vs, "EC_height"))
+            profile_time = np.asarray(
+                CloudSatReader._read_vdata(vs, "Profile_time")
+            )
+            utc_start = np.asarray(
+                CloudSatReader._read_vdata(vs, "UTC_start")
+            )
+            latitude = np.asarray(CloudSatReader._read_vdata(vs, "Latitude"))
+            longitude = np.asarray(CloudSatReader._read_vdata(vs, "Longitude"))
+            dem_elevation = np.asarray(
+                CloudSatReader._read_vdata(vs, "DEM_elevation")
+            )
+            temperature_2m = np.asarray(
+                CloudSatReader._read_vdata(vs, "Temperature_2m")
+            )
+            skin_temperature = self._read_optional_profile_vdata(
+                vs, "Skin_temperature", len(latitude)
+            )
+            surface_pressure = self._read_optional_profile_vdata(
+                vs, "Surface_pressure", len(latitude)
+            )
+            u10_velocity = np.asarray(
+                CloudSatReader._read_vdata(vs, "U10_velocity")
+            )
+            v10_velocity = np.asarray(
+                CloudSatReader._read_vdata(vs, "V10_velocity")
+            )
+        finally:
+            vs.end()
+            hdf.close()
+
+        profile_count = len(latitude)
+        profile_time = CloudSatReader._as_profile_array(
+            profile_time, profile_count, "Profile_time"
+        )
+        utc_start = CloudSatReader._as_profile_array(
+            utc_start, profile_count, "UTC_start"
+        )
+        utc_time = (utc_start + profile_time) / 3600.0
+
+        low, high = latitude_bounds
+        indices = np.flatnonzero((latitude >= low) & (latitude <= high))
+        selected_ec_height = (
+            ec_height[indices]
+            if ec_height.ndim > 1 and ec_height.shape[0] == profile_count
+            else ec_height
+        )
+        return CloudSatAuxiliaryTransect(
+            source=Path(path),
+            pressure=self._interp_to_cloudsat_grid(
+                pressure[indices], selected_ec_height
+            ),
+            dem_elevation=dem_elevation[indices],
+            temperature=self._interp_to_cloudsat_grid(
+                temperature[indices], selected_ec_height
+            ),
+            specific_humidity=self._interp_to_cloudsat_grid(
+                specific_humidity[indices], selected_ec_height
+            ),
+            ec_height=selected_ec_height,
+            temperature_2m=temperature_2m[indices],
+            skin_temperature=skin_temperature[indices],
+            surface_pressure=surface_pressure[indices],
+            u10_velocity=u10_velocity[indices],
+            v10_velocity=v10_velocity[indices],
+            utc_time=utc_time[indices],
+            latitude=latitude[indices],
+            longitude=longitude[indices],
+        )
+
+    @staticmethod
+    def _read_optional_profile_vdata(
+        vs: Any, name: str, profile_count: int
+    ) -> np.ndarray:
+        try:
+            return np.asarray(CloudSatReader._read_vdata(vs, name))
+        except Exception:
+            return np.full(profile_count, np.nan, dtype=np.float32)
+
+    @staticmethod
+    def _interp_to_cloudsat_grid(
+        values: np.ndarray,
+        ec_height: np.ndarray,
+        levels: int = 40,
+        resolution_km: float = 0.5,
+    ) -> np.ndarray:
+        z_grid = np.arange(levels, dtype=np.float32) * resolution_km
+        output = np.zeros((values.shape[0], levels), dtype=np.float32)
+        for profile in range(values.shape[0]):
+            profile_values = np.squeeze(values[profile])
+            profile_heights = (
+                np.squeeze(ec_height[profile])
+                if ec_height.ndim > 1
+                else np.squeeze(ec_height)
+            )
+            valid = np.flatnonzero(
+                np.isfinite(profile_values)
+                & np.isfinite(profile_heights)
+                & (profile_values > 0)
+            )
+            if len(valid) < 2:
+                continue
+            output[profile] = np.interp(
+                z_grid,
+                np.flip(profile_heights[valid] / 1000.0),
+                np.flip(profile_values[valid]),
+            )
+        return output

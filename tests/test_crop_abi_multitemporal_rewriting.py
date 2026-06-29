@@ -10,6 +10,7 @@ from satvision_pix4d.preprocessing.cloudsat_abi.abi import (
     ABIGeometry,
 )
 from satvision_pix4d.preprocessing.cloudsat_abi.cloudsat import (
+    CloudSatAuxiliaryTransect,
     CloudSatOrbitFile,
     CloudSatTransect,
 )
@@ -22,6 +23,7 @@ from satvision_pix4d.preprocessing.cloudsat_abi.pipeline import (
     CloudSatLabelError,
     run_parallel,
 )
+from satvision_pix4d.preprocessing.cloudsat_abi.merra2 import MERRA2Reader
 from satvision_pix4d.preprocessing.cloudsat_abi.writer import NPZChipWriter
 from satvision_pix4d.view.cloudsat_abi_cropping_cli import (
     build_parser,
@@ -74,6 +76,32 @@ def make_transect(tmp_path, profiles=9):
     )
 
 
+def make_auxiliary_transect(tmp_path, profiles=9):
+    levels = 40
+    profile_values = np.arange(profiles * levels, dtype=np.float32).reshape(
+        profiles, levels
+    )
+    return CloudSatAuxiliaryTransect(
+        source=tmp_path / "aux.hdf",
+        pressure=profile_values + 100.0,
+        dem_elevation=np.arange(profiles, dtype=np.float32),
+        temperature=profile_values + 200.0,
+        specific_humidity=profile_values + 300.0,
+        ec_height=np.broadcast_to(
+            np.arange(levels, dtype=np.float32) * 500.0,
+            (profiles, levels),
+        ),
+        temperature_2m=np.arange(profiles, dtype=np.float32) + 280.0,
+        skin_temperature=np.arange(profiles, dtype=np.float32) + 285.0,
+        surface_pressure=np.arange(profiles, dtype=np.float32) + 900.0,
+        u10_velocity=np.arange(profiles, dtype=np.float32) + 1.0,
+        v10_velocity=np.arange(profiles, dtype=np.float32) + 2.0,
+        utc_time=np.arange(profiles, dtype=np.float32) / 10.0,
+        latitude=np.linspace(-4, 4, profiles),
+        longitude=np.linspace(-80, -72, profiles),
+    )
+
+
 def test_abi_file_info_reads_platform_channel_and_year_rollover():
     info = ABIFileInfo.from_path(abi_name(7))
 
@@ -123,14 +151,20 @@ def test_geometry_nearest_uses_local_refinement():
 
 def test_geometry_retains_original_inner_disk_and_rejects_limb_chip():
     geometry = ABIGeometry.__new__(ABIGeometry)
-    geometry.latitude = type("GridShape", (), {"shape": (10848, 10848)})()
+    latitude = np.arange(100, dtype=np.float32).reshape(10, 10)
+    geometry.latitude = latitude
+    geometry.longitude = latitude + 100
     geometry.valid = np.ones((10, 10), dtype=bool)
     geometry.valid[3:7, 5:7] = False
 
-    assert geometry.inside_inner_disk(1600, 1600, 1600)
-    assert geometry.inside_inner_disk(9248, 9248, 1600)
-    assert not geometry.inside_inner_disk(10169, 8022, 1600)
+    assert geometry.inside_inner_disk(2, 2, 2)
+    assert geometry.inside_inner_disk(8, 8, 2)
+    assert not geometry.inside_inner_disk(9, 8, 2)
     assert geometry.valid_fraction(5, 5, 4) == 0.5
+    chip_latitude, chip_longitude = geometry.crop_latlon(5, 5, 4)
+    assert chip_latitude.shape == (4, 4)
+    assert chip_latitude[0, 0] == 33
+    assert chip_longitude[-1, -1] == 166
 
 
 def test_native_indices_match_original_one_km_resampling():
@@ -139,14 +173,39 @@ def test_native_indices_match_original_one_km_resampling():
     assert ABIArchive._native_indices(3, 7, 0.5).tolist() == [1, 2, 2, 3]
 
 
+def test_merra2_reader_samples_chip_pixels_and_normalizes_variables(tmp_path):
+    reader = MERRA2Reader(tmp_path, variables=("T", "QV", "T2m"))
+
+    assert reader.outputs == ("Temperature", "WV", "T2m")
+
+    class FakeVariable:
+        dimensions = ("time", "lev", "lat", "lon")
+
+        def __init__(self):
+            self.data = np.arange(1 * 2 * 3 * 4).reshape(1, 2, 3, 4)
+
+        def __getitem__(self, item):
+            return self.data[item]
+
+    lat_index = np.asarray([[0, 1], [2, 1]])
+    lon_index = np.asarray([[1, 2], [3, 0]])
+
+    sampled = reader._sample_variable(FakeVariable(), 0, lat_index, lon_index)
+
+    assert sampled.shape == (2, 2, 2)
+    assert sampled[0, 0].tolist() == [1, 13]
+    assert sampled[1, 0].tolist() == [11, 23]
+
+
 def test_cloudsat_transect_owns_window_and_cloud_mask_logic(tmp_path):
     transect = make_transect(tmp_path)
 
     arrays = transect.metadata_arrays(center=4, count=5)
 
     assert arrays["cloudsat_latitude"].shape == (5,)
-    assert arrays["cloudsat_cloud_mask"].shape == (5, 40)
-    assert arrays["cloudsat_cloud_mask"][0, 4:7].tolist() == [4, 4, 4]
+    assert arrays["cloudsat_cloud_class"].shape == (5, 40)
+    assert arrays["cloudsat_cloud_class"][0, 4:7].tolist() == [4, 4, 4]
+    assert arrays["cloudsat_cloud_binary_mask"][0, 4:7].tolist() == [1, 1, 1]
     with pytest.raises(IndexError):
         transect.profile_window(center=1, count=5)
 
@@ -178,6 +237,9 @@ def test_crop_config_validates_merra_and_normalizes_transect(tmp_path):
             tmp_path, metadata=frozenset(), profile_selection="chip"
         )
 
+    with pytest.raises(ValueError, match="cloudsat_aux"):
+        make_config(tmp_path, metadata=frozenset({"cloudsat_aux"}))
+
 
 def test_cli_builds_typed_satellite_configuration(tmp_path):
     args = build_parser().parse_args([
@@ -196,6 +258,77 @@ def test_cli_builds_typed_satellite_configuration(tmp_path):
     assert config.satellite.name == "GOES-18"
     assert config.satellite.region == "west"
     assert config.metadata == frozenset()
+
+
+def test_cli_accepts_cloudsat_aux_metadata_group(tmp_path):
+    aux_root = tmp_path / "ECMWF-AUX"
+    args = build_parser().parse_args([
+        "--abi-root", str(tmp_path / "abi"),
+        "--cloudsat-root", str(tmp_path / "cloudsat"),
+        "--latlon-path", str(tmp_path / "west.nc"),
+        "--output-dir", str(tmp_path / "output"),
+        "--year", "2019",
+        "--satellite", "goes18",
+        "--metadata", "cloudsat", "cloudsat_aux",
+        "--cloudsat-aux-root", str(aux_root),
+    ])
+
+    config = config_from_args(args)
+
+    assert config.metadata == frozenset({"cloudsat", "cloudsat_aux"})
+    assert config.cloudsat_aux_root == aux_root
+
+
+def test_cloudsat_auxiliary_arrays_are_saved_with_selected_profiles(tmp_path):
+    transect = make_transect(tmp_path)
+    auxiliary_transect = make_auxiliary_transect(tmp_path)
+    orbit_file = CloudSatOrbitFile(336, "72433", transect.source)
+
+    class FakeGeometry:
+        @staticmethod
+        def nearest(latitude, longitude):
+            return 10, 20
+
+    class FakeABI:
+        geometry = FakeGeometry()
+
+        @staticmethod
+        def crop(requested, row, column, size):
+            return np.zeros((size, size, 16), dtype=np.float32), requested
+
+    config = make_config(
+        tmp_path,
+        metadata=frozenset({"cloudsat", "cloudsat_aux"}),
+    )
+    pipeline = CloudSatABICollocationPipeline(
+        config,
+        abi_archive=FakeABI(),
+        cloudsat_reader=object(),
+        writer=NPZChipWriter(config.output_dir),
+    )
+
+    sample = pipeline.build_sample(
+        orbit_file, transect, center=4, auxiliary_transect=auxiliary_transect
+    )
+    arrays = sample.auxiliary_arrays
+
+    assert arrays["cloudsat_pressure"].shape == (5, 40)
+    assert arrays["cloudsat_temperature"].shape == (5, 40)
+    assert arrays["cloudsat_specific_humidity"].shape == (5, 40)
+    assert arrays["cloudsat_ec_height"].shape == (5, 40)
+    assert arrays["cloudsat_dem_elevation"].tolist() == [2, 3, 4, 5, 6]
+    assert arrays["cloudsat_temperature_2m"].tolist() == [
+        282, 283, 284, 285, 286
+    ]
+    assert arrays["cloudsat_skin_temperature"].tolist() == [
+        287, 288, 289, 290, 291
+    ]
+    assert arrays["cloudsat_surface_pressure"].tolist() == [
+        902, 903, 904, 905, 906
+    ]
+    assert sample.metadata["cloudsat_aux_source"] == str(
+        auxiliary_transect.source
+    )
 
 
 @pytest.mark.parametrize(
@@ -278,11 +411,13 @@ def test_pipeline_components_are_injectable_and_preserve_output_schema(tmp_path)
     assert len(outputs) == 1
     assert outputs[0].name.startswith("GOES18_west_")
     with np.load(outputs[0]) as data:
-        assert data["chip"].shape == (3, 8, 8, 16)
-        assert data["cloudsat_cloud_mask"].shape == (5, 40)
-        assert data["cloudsat_abi_row"].shape == (5,)
-        assert data["cloudsat_abi_column"].shape == (5,)
-        assert data["cloudsat_profile_index"].shape == (5,)
+        assert data["ABI/chip"].shape == (3, 8, 8, 16)
+        assert data["ABI/offsets_minutes"].tolist() == [-20, 0, 20]
+        assert data["CloudSat/cloud_class"].shape == (5, 40)
+        assert data["CloudSat/cloud_binary_mask"].shape == (5, 40)
+        assert data["CloudSat/abi_row"].shape == (5,)
+        assert "chip" not in data.files
+        assert "cloudsat_cloud_class" not in data.files
         metadata = str(data["metadata_json"])
         assert '"satellite":"GOES-18"' in metadata
         assert '"satellite_region":"west"' in metadata

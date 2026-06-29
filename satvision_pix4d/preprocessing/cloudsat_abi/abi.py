@@ -130,6 +130,23 @@ class ABIGeometry:
             np.mean(self.valid[row_start:row_stop, column_start:column_stop])
         )
 
+    def crop_latlon(
+        self, row: int, column: int, size: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return latitude and longitude arrays for one ABI chip footprint."""
+        half = size // 2
+        row_start, row_stop = row - half, row + half
+        column_start, column_stop = column - half, column + half
+        if (
+            row_start < 0
+            or column_start < 0
+            or row_stop > self.latitude.shape[0]
+            or column_stop > self.latitude.shape[1]
+        ):
+            raise ValueError("ABI chip footprint extends outside geometry grid")
+        selection = np.s_[row_start:row_stop, column_start:column_stop]
+        return self.latitude[selection], self.longitude[selection]
+
     def inside_inner_disk(self, row: int, column: int, margin: int) -> bool:
         """Match the original conservative square inner-disk center bounds."""
         return (
