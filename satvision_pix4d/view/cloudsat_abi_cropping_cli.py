@@ -11,12 +11,12 @@ from typing import Sequence
 from satvision_pix4d.preprocessing.cloudsat_abi import (
     CropConfig,
     get_satellite,
-    CloudSatABICollocationPipeline,
 )
 from satvision_pix4d.preprocessing.cloudsat_abi.config import (
     SATELLITES,
     DEFAULT_GEOMETRY_DIR
 )
+from satvision_pix4d.preprocessing.cloudsat_abi.pipeline import run_parallel
 
 LOG = logging.getLogger(__name__)
 
@@ -137,6 +137,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-missing-timesteps", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
+        "--workers", type=int, default=1,
+        help=(
+            "Number of orbit worker processes. Each worker loads a large ABI "
+            "geometry grid; 2-4 is recommended. Defaults to 1."
+        ),
+    )
+    parser.add_argument(
         "--max-chips", type=int,
         help="Stop after this many new outputs (useful for validation)",
     )
@@ -193,13 +200,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, args.log_level),
-        format="%(asctime)s %(levelname)s %(message)s",
+        format="%(asctime)s %(processName)s %(levelname)s %(message)s",
     )
 
     try:
         config = config_from_args(args)
-        pipeline = CloudSatABICollocationPipeline(config)
-        written = pipeline.run()
+        workers = args.workers
+        if config.max_chips is not None and workers > 1:
+            LOG.warning(
+                "Using workers=1 with --max-chips to preserve the exact limit"
+            )
+            workers = 1
+        written = run_parallel(config, workers)
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         LOG.error("%s", exc)
         return 1

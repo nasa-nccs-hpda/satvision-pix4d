@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 
 import numpy as np
 import pytest
@@ -19,6 +20,7 @@ from satvision_pix4d.preprocessing.cloudsat_abi.config import (
 from satvision_pix4d.preprocessing.cloudsat_abi.pipeline import (
     CloudSatABICollocationPipeline,
     CloudSatLabelError,
+    run_parallel,
 )
 from satvision_pix4d.preprocessing.cloudsat_abi.writer import NPZChipWriter
 from satvision_pix4d.view.cloudsat_abi_cropping_cli import (
@@ -284,6 +286,14 @@ def test_pipeline_components_are_injectable_and_preserve_output_schema(tmp_path)
         metadata = str(data["metadata_json"])
         assert '"satellite":"GOES-18"' in metadata
         assert '"satellite_region":"west"' in metadata
+        metadata = json.loads(str(data["metadata_json"]))
+        assert metadata["cloudsat_cloud_pixel_fraction"] == pytest.approx(0.075)
+        assert metadata["cloudsat_cloud_pixel_percentage"] == pytest.approx(7.5)
+        assert metadata["cloudsat_cloud_percentage"] == pytest.approx(7.5)
+        assert metadata["cloudsat_cloudy_profile_fraction"] == pytest.approx(1.0)
+        assert metadata["cloudsat_cloudy_profile_percentage"] == pytest.approx(
+            100.0
+        )
 
 
 def test_chip_profile_selection_covers_top_to_bottom_in_abi_row_order(tmp_path):
@@ -347,3 +357,14 @@ def test_missing_cloudsat_center_is_rejected_before_abi_io(tmp_path):
 
     with pytest.raises(CloudSatLabelError, match="no valid retrieval"):
         pipeline.build_sample(orbit_file, transect, center=4)
+
+
+def test_parallel_runner_validates_worker_count_before_loading_data(tmp_path):
+    config = make_config(tmp_path)
+
+    with pytest.raises(ValueError, match="workers must be at least 1"):
+        run_parallel(config, workers=0)
+
+    limited = make_config(tmp_path, max_chips=2)
+    with pytest.raises(ValueError, match="max_chips requires workers=1"):
+        run_parallel(limited, workers=2)
