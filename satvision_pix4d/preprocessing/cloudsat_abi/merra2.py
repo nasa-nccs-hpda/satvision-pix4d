@@ -28,6 +28,10 @@ MERRA2_VARIABLES = {
 }
 
 DEFAULT_MERRA2_OUTPUTS = tuple(MERRA2_VARIABLES)
+PRESSURE_LEVEL_OUTPUTS = frozenset(
+    {"Pressure", "Temperature", "WV", "Geopotential_height"}
+)
+TWO_D_OUTPUTS = frozenset({"T2m", "U10m", "V10m"})
 
 
 class MERRA2Reader:
@@ -98,7 +102,7 @@ class MERRA2Reader:
 
         for when in times:
             remaining = set(output_names)
-            for path in self.files_for_date(when):
+            for path in self.files_for_date(when, output_names):
                 with nc.Dataset(path) as dataset:
                     lat_var = self._coordinate(dataset, ("lat", "latitude"))
                     lon_var = self._coordinate(dataset, ("lon", "longitude"))
@@ -145,13 +149,17 @@ class MERRA2Reader:
             sources,
         )
 
-    def files_for_date(self, when: datetime) -> list[Path]:
-        date_key = when.strftime("%Y%m%d")
-        if date_key in self._dated_file_cache:
-            return self._dated_file_cache[date_key]
+    def files_for_date(
+        self, when: datetime, output_names: Sequence[str] = ()
+    ) -> list[Path]:
+        requested = tuple(sorted(output_names))
+        date_token = when.strftime("%Y%m%d")
+        cache_key = f"{date_token}:{','.join(requested)}"
+        if cache_key in self._dated_file_cache:
+            return self._dated_file_cache[cache_key]
         month_root = self.root / f"Y{when:%Y}" / f"M{when:%m}"
         search_roots = [month_root] if month_root.is_dir() else [self.root]
-        daily = self._matching_files(search_roots, date_key)
+        daily = self._matching_files(search_roots, date_token)
         month_key = when.strftime("%Y%m")
         monthly = [
             path
@@ -159,17 +167,18 @@ class MERRA2Reader:
             if self._monthly_file(path, month_key)
         ]
         daily_set = set(daily)
-        matches = daily + [
+        candidates = daily + [
             path
             for path in monthly
             if path not in daily_set
-            and date_key not in path.name
+            and date_token not in path.name
         ]
+        matches = self._filter_collection(candidates, requested)
         if not matches:
             raise FileNotFoundError(
                 f"No MERRA-2 NetCDF file for {when.date()} below {self.root}"
             )
-        self._dated_file_cache[date_key] = matches
+        self._dated_file_cache[cache_key] = matches
         return matches
 
     @staticmethod
@@ -185,6 +194,17 @@ class MERRA2Reader:
     def _monthly_file(path: Path, month_key: str) -> bool:
         date_match = re.search(r"\.(\d{6,8})\.nc", path.name)
         return date_match is not None and date_match.group(1) == month_key
+
+    @staticmethod
+    def _filter_collection(
+        paths: Sequence[Path], output_names: Sequence[str]
+    ) -> list[Path]:
+        requested = set(output_names)
+        if requested & PRESSURE_LEVEL_OUTPUTS:
+            return [path for path in paths if "_Np." in path.name]
+        if requested & TWO_D_OUTPUTS:
+            return [path for path in paths if "_2d_" in path.name]
+        return list(paths)
 
     def constant_file(self) -> Path:
         if self._constant_file_cache is not None:
@@ -208,7 +228,7 @@ class MERRA2Reader:
 
     def _read_pressure_levels(self, when: datetime) -> tuple[np.ndarray, Path]:
         nc = require_netcdf4()
-        for path in self.files_for_date(when):
+        for path in self.files_for_date(when, ("Pressure",)):
             with nc.Dataset(path) as dataset:
                 for name in MERRA2_VARIABLES["Pressure"]:
                     if name in dataset.variables:

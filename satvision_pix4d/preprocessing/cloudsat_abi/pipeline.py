@@ -221,7 +221,13 @@ class CloudSatABICollocationPipeline:
         if isinstance(exc, IndexError):
             return "profile_window"
         message = str(exc).lower()
-        if "inner disk" in message or "on-disk" in message or "coverage" in message:
+        if (
+            "inner disk" in message
+            or "on-disk" in message
+            or "coverage" in message
+            or "footprint" in message
+            or "geometry grid" in message
+        ):
             return "abi_geometry"
         if "track" in message or "profiles cross" in message:
             return "cloudsat_track"
