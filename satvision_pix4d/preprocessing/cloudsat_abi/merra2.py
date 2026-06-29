@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -148,13 +149,22 @@ class MERRA2Reader:
         date_key = when.strftime("%Y%m%d")
         if date_key in self._dated_file_cache:
             return self._dated_file_cache[date_key]
-        tokens = (date_key, when.strftime("%Y%j"))
-        matches = sorted(
+        month_root = self.root / f"Y{when:%Y}" / f"M{when:%m}"
+        search_roots = [month_root] if month_root.is_dir() else [self.root]
+        daily = self._matching_files(search_roots, date_key)
+        month_key = when.strftime("%Y%m")
+        monthly = [
             path
-            for path in self.root.rglob("*")
-            if path.suffix.lower() in {".nc", ".nc4"}
-            and any(token in path.name for token in tokens)
-        )
+            for path in self._matching_files(search_roots, month_key)
+            if self._monthly_file(path, month_key)
+        ]
+        daily_set = set(daily)
+        matches = daily + [
+            path
+            for path in monthly
+            if path not in daily_set
+            and date_key not in path.name
+        ]
         if not matches:
             raise FileNotFoundError(
                 f"No MERRA-2 NetCDF file for {when.date()} below {self.root}"
@@ -162,9 +172,27 @@ class MERRA2Reader:
         self._dated_file_cache[date_key] = matches
         return matches
 
+    @staticmethod
+    def _matching_files(search_roots: Sequence[Path], token: str) -> list[Path]:
+        return sorted(
+            path
+            for search_root in search_roots
+            for path in search_root.glob(f"*{token}*.nc*")
+            if path.suffix.lower() in {".nc", ".nc4"}
+        )
+
+    @staticmethod
+    def _monthly_file(path: Path, month_key: str) -> bool:
+        date_match = re.search(r"\.(\d{6,8})\.nc", path.name)
+        return date_match is not None and date_match.group(1) == month_key
+
     def constant_file(self) -> Path:
         if self._constant_file_cache is not None:
             return self._constant_file_cache
+        direct = self.root / "MERRA2.const_2d_asm_Nx.00000000.nc4"
+        if direct.exists():
+            self._constant_file_cache = direct
+            return direct
         matches = sorted(
             path
             for path in self.root.rglob("*")
