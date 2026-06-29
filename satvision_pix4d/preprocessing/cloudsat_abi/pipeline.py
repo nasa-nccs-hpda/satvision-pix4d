@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import timedelta
 
 import numpy as np
@@ -28,6 +31,15 @@ LOG = logging.getLogger(__name__)
 
 class CloudSatLabelError(ValueError):
     """A candidate lacks the requested valid CloudSat labels."""
+
+
+@dataclass(frozen=True)
+class OrbitResult:
+    day: int
+    orbit: str
+    candidates: int
+    written: int
+    skipped: dict[str, int]
 
 
 class CloudSatABICollocationPipeline:
@@ -75,82 +87,90 @@ class CloudSatABICollocationPipeline:
             self.config.day_end,
             self.config.orbit,
         ):
-            LOG.info(
-                "Processing CloudSat orbit %s on %d-%03d",
+            remaining = (
+                None
+                if self.config.max_chips is None
+                else self.config.max_chips - written
+            )
+            if remaining is not None and remaining <= 0:
+                break
+            result = self.process_orbit(orbit_file, max_new=remaining)
+            written += result.written
+        return written
+
+    def process_orbit(
+        self, orbit_file: CloudSatOrbitFile, max_new: int | None = None
+    ) -> OrbitResult:
+        LOG.info(
+            "Processing CloudSat orbit %s on %d-%03d",
+            orbit_file.orbit,
+            self.config.year,
+            orbit_file.day,
+        )
+        transect = self.cloudsat.read(orbit_file.path, self.config.transect)
+        if (
+            self.config.profile_selection == "fixed"
+            and len(transect) < self.config.profiles_per_chip
+        ):
+            LOG.warning(
+                "Skipping orbit %s: only %d profiles in transect",
                 orbit_file.orbit,
-                self.config.year,
-                orbit_file.day,
+                len(transect),
             )
-            transect = self.cloudsat.read(
-                orbit_file.path, self.config.transect
+            return OrbitResult(
+                orbit_file.day, orbit_file.orbit, 0, 0,
+                {"short_transect": 1},
             )
-            if (
-                self.config.profile_selection == "fixed"
-                and len(transect) < self.config.profiles_per_chip
-            ):
-                LOG.warning(
-                    "Skipping orbit %s: only %d profiles in transect",
-                    orbit_file.orbit,
-                    len(transect),
-                )
-                continue
-            skipped = Counter()
-            orbit_written = 0
-            for candidate_number, center in enumerate(
-                self._profile_centers(transect), start=1
-            ):
-                if (
-                    self.config.max_chips is not None
-                    and written >= self.config.max_chips
-                ):
-                    return written
-                try:
-                    sample = self.build_sample(orbit_file, transect, center)
-                    output, created = self.writer.write(sample)
-                except (
-                    FileNotFoundError,
-                    ValueError,
-                    IndexError,
-                    KeyError,
-                ) as exc:
-                    reason = self._skip_reason(exc)
-                    skipped[reason] += 1
-                    if skipped[reason] <= 2:
-                        LOG.warning(
-                            "Skipping orbit %s profile %d [%s]: %s",
-                            orbit_file.orbit,
-                            center,
-                            reason,
-                            exc,
-                        )
-                    if candidate_number % 100 == 0:
-                        LOG.info(
-                            "Orbit %s progress: %d candidates, %d new, "
-                            "skipped=%s",
-                            orbit_file.orbit,
-                            candidate_number,
-                            orbit_written,
-                            dict(skipped),
-                        )
-                    continue
-                written += int(created)
+
+        skipped = Counter()
+        orbit_written = 0
+        candidates = 0
+        for candidates, center in enumerate(
+            self._profile_centers(transect), start=1
+        ):
+            if max_new is not None and orbit_written >= max_new:
+                break
+            try:
+                sample = self.build_sample(orbit_file, transect, center)
+                output, created = self.writer.write(sample)
+            except (FileNotFoundError, ValueError, IndexError, KeyError) as exc:
+                reason = self._skip_reason(exc)
+                skipped[reason] += 1
+                if skipped[reason] <= 2:
+                    LOG.warning(
+                        "Skipping orbit %s profile %d [%s]: %s",
+                        orbit_file.orbit,
+                        center,
+                        reason,
+                        exc,
+                    )
+            else:
                 orbit_written += int(created)
                 LOG.info("%s %s", "Saved" if created else "Exists", output)
-                if candidate_number % 100 == 0:
-                    LOG.info(
-                        "Orbit %s progress: %d candidates, %d new, skipped=%s",
-                        orbit_file.orbit,
-                        candidate_number,
-                        orbit_written,
-                        dict(skipped),
-                    )
-            LOG.info(
-                "Finished orbit %s: %d new chip(s), skipped=%s",
-                orbit_file.orbit,
-                orbit_written,
-                dict(skipped),
-            )
-        return written
+
+            if candidates % 100 == 0:
+                LOG.info(
+                    "Orbit %s progress: %d candidates, %d new, skipped=%s",
+                    orbit_file.orbit,
+                    candidates,
+                    orbit_written,
+                    dict(skipped),
+                )
+
+        result = OrbitResult(
+            orbit_file.day,
+            orbit_file.orbit,
+            candidates,
+            orbit_written,
+            dict(skipped),
+        )
+        LOG.info(
+            "Finished orbit %s: %d new chip(s), skipped=%s",
+            result.orbit,
+            result.written,
+            result.skipped,
+        )
+        return result
 
     @staticmethod
     def _skip_reason(exc: Exception) -> str:
@@ -312,8 +332,28 @@ class CloudSatABICollocationPipeline:
             )
 
         mask = arrays["cloudsat_cloud_mask"]
-        cloudy_fraction = float(np.mean(mask[mask >= 0] > 0)) if np.any(mask >= 0) else 0.0
+        cloudy_fraction = (
+            float(np.mean(mask[mask >= 0] > 0))
+            if np.any(mask >= 0)
+            else 0.0
+        )
         metadata["cloudsat_cloud_pixel_fraction"] = cloudy_fraction
+        metadata["cloudsat_cloud_pixel_percentage"] = cloudy_fraction * 100.0
+        metadata["cloudsat_cloud_percentage"] = cloudy_fraction * 100.0
+
+        if mask.ndim == 2 and len(validity):
+            valid_profiles = validity[: mask.shape[0]]
+            if np.any(valid_profiles):
+                cloudy_profiles = np.any(mask[valid_profiles] > 0, axis=1)
+                cloudy_profile_fraction = float(np.mean(cloudy_profiles))
+            else:
+                cloudy_profile_fraction = 0.0
+        else:
+            cloudy_profile_fraction = float(np.any(mask > 0))
+        metadata["cloudsat_cloudy_profile_fraction"] = cloudy_profile_fraction
+        metadata["cloudsat_cloudy_profile_percentage"] = (
+            cloudy_profile_fraction * 100.0
+        )
         if self.config.require_cloud and not np.any(mask > 0):
             raise CloudSatLabelError(
                 "CloudSat segment is valid but contains no cloud"
@@ -424,6 +464,12 @@ class CloudSatABICollocationPipeline:
             "abi_inner_disk_margin": self.config.inner_disk_margin,
             "abi_common_grid_resolution_km": 1.0,
             "chip_size": self.config.chip_size,
+            "cloudsat_profile_selection": self.config.profile_selection,
+            "cloudsat_profiles_per_chip": (
+                self.config.profiles_per_chip
+                if self.config.profile_selection == "fixed"
+                else None
+            ),
             "transect_latitude_min": self.config.transect[0],
             "transect_latitude_max": self.config.transect[1],
             "metadata_groups": sorted(self.config.metadata),
@@ -431,3 +477,78 @@ class CloudSatABICollocationPipeline:
             "abi_geometry_source": str(self.config.latlon_path),
             "cloudsat_source": str(orbit_file.path),
         }
+
+
+_WORKER_PIPELINE: CloudSatABICollocationPipeline | None = None
+
+
+def _initialize_worker(config: CropConfig) -> None:
+    global _WORKER_PIPELINE
+    _WORKER_PIPELINE = CloudSatABICollocationPipeline(config)
+
+
+def _process_orbit_worker(orbit_file: CloudSatOrbitFile) -> OrbitResult:
+    if _WORKER_PIPELINE is None:
+        raise RuntimeError("CloudSat-ABI worker was not initialized")
+    return _WORKER_PIPELINE.process_orbit(orbit_file)
+
+
+def run_parallel(config: CropConfig, workers: int) -> int:
+    """Process independent CloudSat orbits using persistent worker pipelines."""
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
+    if workers == 1:
+        return CloudSatABICollocationPipeline(config).run()
+    if config.max_chips is not None:
+        raise ValueError(
+            "max_chips requires workers=1 to preserve the exact output limit"
+        )
+
+    reader = CloudSatReader(config.cloudsat_root, config.cloudsat_index_root)
+    orbit_files = list(
+        reader.discover_orbits(
+            config.year,
+            config.day_start,
+            config.day_end,
+            config.orbit,
+        )
+    )
+    if not orbit_files:
+        return 0
+
+    LOG.info(
+        "Processing %d CloudSat orbit(s) with %d workers. Each worker loads "
+        "its own ABI geometry grid.",
+        len(orbit_files),
+        workers,
+    )
+    written = 0
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=context,
+        initializer=_initialize_worker,
+        initargs=(config,),
+    ) as executor:
+        futures = {
+            executor.submit(_process_orbit_worker, orbit_file): orbit_file
+            for orbit_file in orbit_files
+        }
+        for future in as_completed(futures):
+            orbit_file = futures[future]
+            try:
+                result = future.result()
+            except Exception:
+                LOG.exception(
+                    "Worker failed for orbit %s on day %03d",
+                    orbit_file.orbit,
+                    orbit_file.day,
+                )
+                continue
+            written += result.written
+            LOG.info(
+                "Parallel progress: orbit %s complete, total new chips=%d",
+                result.orbit,
+                written,
+            )
+    return written
